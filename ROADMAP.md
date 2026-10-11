@@ -10,8 +10,6 @@
 - **Widescreen at any view size.** Today the side strips need the full-width
   view (Change View all the way up). Smaller views could be widened too by
   treating the view's own edges as the edges of the cast.
-- **netlab recipe** (`projects/wolf3d.env`) so builds and the conformance run go
-  to the farm (repo rules, section 10).
 
 ## Later
 

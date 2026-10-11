@@ -1,6 +1,6 @@
 /*
  * machine.h - the DOS machine under the lifted game: shared state between
- * src/*.c. The generated code never includes this; it sees lifted.h only.
+ * the files in src/. The generated code never includes this; it sees lifted.h only.
  */
 #pragma once
 #include "lifted.h"
