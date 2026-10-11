@@ -4,12 +4,19 @@ With an RTX GPU, the hi-res 3D view can go through NVIDIA DLSS: DLAA
 (anti-aliasing at the output size, the default when it's available) or Super
 Resolution, which renders fewer pixels and reconstructs the rest.
 
-![The left wall's edge: DLSS off, DLAA, quality, performance](screenshots/dlss.png)
+![The far end of a corridor in the attract demo: DLSS off (left), DLAA (right)](screenshots/dlss.png)
 
-*The same still frame at 1704×800, the receding left wall enlarged 2×. Left to
-right: DLSS off (the hi-res redraw alone; its edge is a pixel staircase), DLAA,
-quality (rendered at 1136×427) and performance (852×320). All three DLSS modes
-draw the edge as a smooth line and keep the texels sharp.*
+*The far end of a corridor in the game's attract demo, the player walking,
+enlarged 3×: DLSS off (left), DLAA (right). Off, the near pillar's texture is
+squeezed below a pixel per texel and comes out as speckle that crawls as you
+move; DLAA resolves it into stone. Close up, the two look alike: the art is
+64×64, and DLSS reconstructs what the game draws, it does not add detail.*
+
+**What to expect.** The hi-res redraw already renders every frame at the
+output resolution with exact geometry, so on near walls DLSS has little to
+fix. It earns its keep at a distance and in motion: texture shimmer and crawl
+on far walls, and the stair-stepped edges of walls and sprites, both of which
+a still screenshot undersells.
 
 | Key / option | |
 |---|---|

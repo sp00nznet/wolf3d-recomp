@@ -91,7 +91,7 @@ The SDK is NVIDIA's and is never in this repository:
 
 ![DLSS off, DLAA, quality, performance](docs/screenshots/dlss.png)
 
-<sub>The left wall's top edge: DLSS off, DLAA, quality (from 1136×427), performance (from 852×320).</sub>
+<sub>A distant corridor in the attract demo, enlarged 3×: DLSS off (left), DLAA (right). The speckle on the far pillar is texture squeezed below a pixel per texel; DLAA resolves it. Close up the two look alike: the art is 64×64.</sub>
 
 Wolf3D draws its walls and sprites with **compiled scalers**, code it writes
 into memory at start-up. They can't be lifted, so the runtime interprets them.
