@@ -13,6 +13,10 @@
 
 ## Later
 
+- **DLSS for moving surfaces.** Doors and push walls slide, and walking actors
+  move; they get the camera's motion only. Their own motion is in the game's
+  state (door positions, actor x/y) and could go into the motion vectors.
+
 - **Sprites between frames.** Sprite heights are the game's integers, so they
   step as they approach. Smoother needs motion the game doesn't report.
 - **Spear of Destiny and the shareware/registered 1.0-1.2 builds.** The finder

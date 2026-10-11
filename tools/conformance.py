@@ -179,6 +179,30 @@ def check_game(game):
        rc == 0 and wide[0] == 1704 and same and filled > 0.98 and cols >= 8,
        f'{wide[0]}x{wide[1]}, middle {"identical" if same else "DIFFERS"}, strip rows {filled:.0%} drawn, {cols}+ colours')
 
+    # DLSS (optional: a build with the SDK from tools/get_dlss.py, and an RTX
+    # GPU). The same moment through DLSS quality: every frame composed (a
+    # recording) so it has its history. The view must be DLSS's (the run says
+    # it upscaled 1136x427 -> 1704x640), close to the plain redraw (same scene,
+    # mean difference under 12 per channel), and the HUD below it untouched.
+    # Without DLSS this is reported as SKIP and not counted, so the baseline
+    # holds on machines that can't run it.
+    out = os.path.join(base, 'dlss')
+    rc, err = run(game, out, 23, START, {'view': 22500},
+                  extra=['--hires', '4', '--widescreen', '16:9', '--dlss', 'quality', '--mute',
+                         '--record', os.path.join(out, 'dlss.mp4')], viewsize=20)
+    if '[dlss] quality:' not in err:
+        why = next((l for l in err.splitlines() if l.startswith('[dlss]')), 'no [dlss] line')
+        print(f'  SKIP  dlss: not in this build or on this GPU ({why})')
+    else:
+        dl = read_bmp(os.path.join(out, 'view.bmp'))
+        vd = region(dl, 0, 0, dl[0], 640)
+        vw_ = region(wide, 0, 0, wide[0], 640)
+        mad = sum(abs((a >> s & 255) - (b >> s & 255)) for a, b in zip(vd[::7], vw_[::7]) for s in (0, 8, 16)) / (3 * len(vd[::7]))
+        hud = region(dl, 0, 648, dl[0], 800) == region(wide, 0, 648, wide[0], 800)
+        ok('dlss: the view through DLSS quality, the HUD untouched',
+           rc == 0 and dl[0] == 1704 and 0 < mad < 12 and hud,
+           f'{dl[0]}x{dl[1]}, mean difference from the plain redraw {mad:.1f}, HUD {"identical" if hud else "DIFFERS"}')
+
     # Save from inside a game, then load it in a fresh process. ESC opens the
     # menu on New Game; Save Game is four down. Slot 0, type a name, ENTER.
     # The load: title, menu, Load Game is three down (Save Game is greyed out

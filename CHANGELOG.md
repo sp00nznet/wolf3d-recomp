@@ -25,6 +25,12 @@ All notable changes to this project are documented here. The format follows
   widescreen, save and load (`tools/conformance.py`, docs/conformance.md).
 - `Setup.cmd` finds Steam's `Wolfenstein 3D\base` (or GOG's) and builds a shortcut.
 - `WOLF_MISSDUMP=1`: the bytes at a dispatch miss.
+- Optional NVIDIA DLSS on the 3D view (`--dlss`, F8): DLAA, or Super Resolution
+  from fewer pixels, fed exact depth and motion vectors from the raycaster's hit
+  points and the eye's movement (`src/dlss.cpp`, `dlss_view()`, docs/dlss.md).
+  The SDK is never in the repository: `tools/get_dlss.py` fetches it under
+  NVIDIA's licence, Setup offers it on NVIDIA GPUs, and CMake builds the DLSS
+  path only when it is there. An 18th conformance check runs when it is.
 
 ### Changed (from the Blake Stone runtime this started as)
 - VGA input status (3DAh): display-disabled now comes in runs of reads, as it does

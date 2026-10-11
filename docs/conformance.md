@@ -5,7 +5,7 @@ py tools/conformance.py            # needs original/wl6 (your copy) and a build
 py tools/conformance.py --update   # record the current count as the new baseline
 ```
 
-Current figure (2026-10-10): **17/17.** The run takes about two minutes:
+Current figure (2026-10-10): **17/17**, and **18/18** with the optional DLSS build. The run takes about two minutes:
 headless time is deterministic and runs faster than real time
 ([architecture](architecture.md#time)).
 
@@ -51,6 +51,7 @@ with scripted keys (`--keys`) and fixed-time frame grabs (`--shot-at`).
 | hires: the 3D view is redrawn at 4x | the same moment at `--hires 4` is not 1280×800, or its view is the original enlarged (≤ 2% of pixels differ) |
 | widescreen: found | `find_widescreen()` could not read WallRefresh, DrawScaleds and the player fields |
 | widescreen: the view reaches into both sides, the 4:3 picture unchanged | at `--widescreen 16:9` the frame is not 1704×800, a row of either side strip is all black, or the 4:3 middle differs from the 4:3 run's (the side passes disturbed the game) |
+| dlss: the view through DLSS quality, the HUD untouched (*only with the optional DLSS build and an RTX GPU; otherwise `SKIP`, not counted*) | the run did not upscale 1136×427 → 1704×640, the view is not close to the plain redraw (mean difference 12 or more per channel), or the HUD below it changed. See [dlss.md](dlss.md) |
 | save: a game saves to slot 0 | ESC → Save Game → slot 0 → a typed name did not write a `SAVEGAM0.WL6` over 1 KB |
 | load: the saved game loads into the 3D view | a fresh process, Load Game → slot 0, is not back in a textured view |
 

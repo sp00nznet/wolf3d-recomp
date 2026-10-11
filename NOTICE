@@ -20,6 +20,11 @@ author). Nothing in this repository is derived from id Software's source
 release of Wolfenstein 3-D (GPL): what the runtime knows about the game was
 read out of the shipping executable with the pcrecomp disassembler.
 
+Optional, and not included: the NVIDIA DLSS SDK. tools/get_dlss.py downloads
+it into the gitignored external/dlss-sdk/ for your own build, under the NVIDIA
+RTX SDKs licence (https://github.com/NVIDIA/DLSS/blob/v310.9.1/LICENSE.txt).
+src/dlss.cpp is this project's own code (MIT) that calls it.
+
 Wolfenstein 3-D is commercial software (id Software; published today by
 Bethesda/ZeniMax). Neither the game, nor anything generated from its
 executable, is part of this repository.

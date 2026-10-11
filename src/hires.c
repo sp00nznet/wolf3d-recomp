@@ -38,6 +38,7 @@ typedef struct {
     uint16_t seg, off;          /* the texture column: postsource */
     uint16_t wh;                /* wallheight[]: 8x the half-height in pixels */
     uint16_t yi, xi;            /* the intercepts' fractions, for sub-texel */
+    double hx, hy;              /* the hit point, in tiles: DLSS's depth scale (dlss_view) */
     uint8_t ok;
 } Col;
 
@@ -77,6 +78,8 @@ void hires_hit(CPU *c)
     k->wh = rd16(ds, (uint16_t)(h->wallheight + 2 * x));
     k->yi = rd16(ds, h->yint);
     k->xi = rd16(ds, h->xint);
+    k->hx = (int32_t)(rd16(ds, h->xint) | (uint32_t)rd16(ds, (uint16_t)(h->xint + 2)) << 16) / 65536.0;
+    k->hy = (int32_t)(rd16(ds, h->yint) | (uint32_t)rd16(ds, (uint16_t)(h->yint + 2)) << 16) / 65536.0;
     k->ok = 1;
     if (!pass) { dirty = 1; dgroup = ds; }
 }
@@ -240,14 +243,27 @@ static void wr32(uint16_t seg, uint16_t off, int32_t v)
 
 #define FINE (2 * M_PI / 3600)                   /* pixelangle[] units: FINEANGLES = 3600 */
 
+/* The eye this frame was cast from (tiles; radians, 0 east, counter-clockwise),
+ * for DLSS's motion vectors: captured here, shown at the flip. */
+typedef struct { int ok; double ex, ey, a; } Cam;
+static Cam cam_cur, cam_shown;
+
 void hires_side(CPU *c)
 {
     const HiresVars *h = &g_hires;
-    if (pass || !h->ok || !h->ws_ok || !wide_cols) return;
+    if (pass || !h->ok || !h->ws_ok) return;
     uint16_t ds = c->ds, pl = rd16(ds, h->player);
     int pa0 = (int16_t)rd16(ds, h->pixelangle);
     for (int i = 0; i < 320; i++) pa_tab[i] = (int16_t)rd16(ds, (uint16_t)(h->pixelangle + 2 * i));
     if (!pl || !pa0) return;
+    {
+        int ang = rd16(ds, (uint16_t)(pl + h->p_angle));
+        double f = rd32(ds, h->focal), a = ang * M_PI / 180;
+        cam_cur.ok = 1; cam_cur.a = a;
+        cam_cur.ex = (rd32(ds, (uint16_t)(pl + h->p_x)) - f * cos(a)) / 65536.0;
+        cam_cur.ey = (rd32(ds, (uint16_t)(pl + h->p_y)) + f * sin(a)) / 65536.0;
+    }
+    if (!wide_cols) return;
     uint64_t t0 = host_us();
     CPU regs = *c;
     int budget = g_recomp_tick_budget;
@@ -332,6 +348,8 @@ void hires_flip(void)
     if (!dirty && !nscols) return;
     memcpy(shown, cur, sizeof shown);
     memset(cur, 0, sizeof cur);
+    cam_shown = cam_cur;
+    cam_cur.ok = 0;
     memcpy(side_shown, side_cur, sizeof side_shown);
     side_shown_ok = side_ran;
     side_ran = 0;
@@ -364,6 +382,7 @@ static double texcoord(const Col *k)
 static int scale_of(int S) { return S < 1 ? 1 : S > 6 ? 6 : S; }
 
 static int compose_inner(uint32_t *out, int S, int *w, int *h);
+static void dlss_view(uint32_t *out);
 static uint64_t c_us, c_n;
 void hires_report(void)
 {
@@ -373,13 +392,6 @@ void hires_report(void)
 }
 
 /* The whole screen at S x 320 by S x 200, the 3D view redrawn. */
-int hires_compose(uint32_t *out, int S, int *w, int *h)
-{
-    uint64_t t = host_us();
-    int r = compose_inner(out, S, w, h);
-    c_us += host_us() - t; c_n++;
-    return r;
-}
 
 /* One column of the wide view: what the game chose there (or, in the side
  * strips, what a side pass did), ready to resample. */
@@ -431,14 +443,88 @@ static VCol side_col(int k, double psi)
     return v;
 }
 
+/* The last composed frame's view, for the DLSS pass (dlss_view) to render
+ * again: where it is in game pixels and in the output, and its geometry. */
+static struct {
+    int ok, S, OX, W;           /* scale; output x of game column 0; frame width */
+    int g0, nv, vx0, vw, vy0, vh;   /* the (wide) view, in game columns and rows */
+    double F, cx, yc;           /* focal length and centre, game pixels */
+    uint32_t pal[256];
+} V;
+static uint8_t px[200][320], ow[200][320];
+static uint8_t ceil_c, floor_c;
+
+/* A wall at view position u (game columns from the wide view's left edge,
+ * continuous): its texture column's address and its half height in game
+ * pixels. 0 where nothing was hit. Each position lies between two of the
+ * game's columns; where both show the same surface the texture coordinate and
+ * height are interpolated, at an edge the nearer wins. The game's own column
+ * choice is ground truth: the sub-texel fraction may move between the two
+ * neighbours' columns but never past them -- at 63.99 + a fraction it would
+ * read the next column in memory, a dashed line down the seam. */
+static int wall_sample(double u, int nv, uint32_t *tex, double *hh_out)
+{
+    int c0 = (int)floor(u);
+    double t = u - c0;
+    if (c0 < 0) { c0 = 0; t = 0; }
+    if (c0 >= nv - 1) { c0 = nv - 1; t = 0; }
+    const VCol *a = &vcols[c0], *b = &vcols[c0 + (c0 + 1 < nv)];
+    if (!a->ok) return 0;
+    double tc = a->tc, hh = a->hh;
+    uint16_t seg = a->seg;
+    if (b->ok && b != a) {
+        if (b->seg == a->seg && fabs(b->tc - tc) < 2.0) {      /* same surface: interpolate */
+            tc += (b->tc - tc) * t;
+            hh += (b->hh - hh) * t;
+        } else if (t >= 0.5) {                                /* an edge: nearest */
+            tc = b->tc; hh = b->hh; seg = b->seg;
+        }
+    }
+    int col = (int)floor(tc), ca = a->col, cb = b->col;
+    int lo = seg == b->seg && b->ok ? (ca < cb ? ca : cb) : (seg == a->seg ? ca : cb);
+    int hi = seg == b->seg && b->ok ? (ca < cb ? cb : ca) : lo;
+    if (seg != a->seg) lo = hi = cb;
+    if (col < lo) col = lo; if (col > hi) col = hi;
+    *tex = (uint32_t)seg * 16 + (uint32_t)col * 64;
+    *hh_out = hh;
+    return 1;
+}
+
+/* Where each sprite goes in the wide view: its centre and height in game
+ * pixels, and the game columns it may cover. A side pass's sprites are moved
+ * into the wide view and kept to their strip. */
+typedef struct { const Sprite *sp; double xc, ht, xlo, xhi; } SprAt;
+static SprAt spr_at[MAXSPR];
+static int nspr_at;
+
+static void place_sprites(int wide, int g0, int nv, int vx0, int vx1, double cx, double F)
+{
+    nspr_at = 0;
+    for (int si = 0; si < nsprs_shown; si++) {
+        const Sprite *sp = &sprs_shown[si];
+        SprAt a = { sp, sp->xc, sp->height, vx0, vx1 + 1 };
+        if (sp->pass) {
+            if (!wide) continue;
+            int k = sp->pass - 1;
+            double pr = atan((cx - (a.xc - vx0)) / F), psi = pr + (k ? -side_rot : side_rot);
+            if (fabs(psi) >= M_PI / 2 - 0.01) continue;
+            a.xc = vx0 + cx - F * tan(psi);
+            a.ht *= cos(pr) / cos(psi);
+            if (k == 0) { a.xlo = g0; a.xhi = vx0; }
+            else        { a.xlo = vx1 + 1; a.xhi = g0 + nv; }
+        }
+        if (a.ht > 0) spr_at[nspr_at++] = a;
+    }
+}
+
 static int compose_inner(uint32_t *out, int S, int *w, int *h)
 {
     S = scale_of(S);
+    V.ok = 0;
     if (!vga_unchained()) return 0;
     const uint8_t *vram = vga_vram(), *own = vga_owner();
     const uint8_t *mem = g_cpu.mem;
     unsigned start = vga_scan_start(), row = vga_row_bytes();
-    static uint8_t px[200][320], ow[200][320];
     int vx0 = 320, vx1 = -1, vy0 = 200, vy1 = -1;
     for (int y = 0; y < 200; y++)
         for (int x = 0; x < 320; x++) {
@@ -478,9 +564,9 @@ static int compose_inner(uint32_t *out, int S, int *w, int *h)
     const int e = wide ? E : 0, g0 = vx0 - e, nv = vw + 2 * e;
     const double cx = vw / 2.0, s = pa_tab[0] > 0 ? FINE : -FINE;
     double F = 0;
-    if (wide) {
+    {
         double num = 0, den = 0;
-        for (int i = 0; i < 320; i++) {
+        for (int i = 0; i < vw; i++) {
             double d = cx - i - 0.5;
             num += d * d; den += d * tan(pa_tab[i] * s);
         }
@@ -497,7 +583,6 @@ static int compose_inner(uint32_t *out, int S, int *w, int *h)
 
     /* floor and ceiling: flat colours, the ones the game cleared to (kept
      * from the last frame that showed any, when a wall fills the view) */
-    static uint8_t ceil_c, floor_c;
     const double yc = (vy0 + (vy1 - vy0 + 1) / 2.0) * S;     /* the horizon, in output rows */
     for (int y = vy0; y <= vy1; y++)
         for (int x = vx0; x <= vx1; x++)
@@ -516,35 +601,10 @@ static int compose_inner(uint32_t *out, int S, int *w, int *h)
     /* walls, column by column, over the planes */
     for (int i = 0; i < nv * S; i++) wallh[i] = 0;
     for (int X = g0 * S; X < (g0 + nv) * S; X++) {
-        double u = (X + 0.5) / S - 0.5 - g0;
-        int c0 = (int)floor(u);
-        double t = u - c0;
-        if (c0 < 0) { c0 = 0; t = 0; }
-        if (c0 >= nv - 1) { c0 = nv - 1; t = 0; }
-        const VCol *a = &vcols[c0], *b = &vcols[c0 + (c0 + 1 < nv)];
-        if (!a->ok) continue;
-        double tc = a->tc, hh = a->hh;
-        uint16_t seg = a->seg;
-        if (b->ok && b != a) {
-            if (b->seg == a->seg && fabs(b->tc - tc) < 2.0) {  /* same surface: interpolate */
-                tc += (b->tc - tc) * t;
-                hh += (b->hh - hh) * t;
-            } else if (t >= 0.5) {                            /* an edge: nearest */
-                tc = b->tc; hh = b->hh; seg = b->seg;
-            }
-        }
+        uint32_t tex; double hh;
+        if (!wall_sample((X + 0.5) / S - 0.5 - g0, nv, &tex, &hh)) continue;
         wallh[X - g0 * S] = hh * 8;
         if (hh <= 0) continue;
-        /* The game's own column choice is ground truth: the sub-texel fraction
-         * may move between the two neighbours' columns but never past them --
-         * at 63.99 + a fraction it would read the next column in memory, and
-         * that showed as a dashed line down the seam. */
-        int col = (int)floor(tc), ca = a->col, cb = b->col;
-        int lo = seg == b->seg && b->ok ? (ca < cb ? ca : cb) : (seg == a->seg ? ca : cb);
-        int hi = seg == b->seg && b->ok ? (ca < cb ? cb : ca) : lo;
-        if (seg != a->seg) lo = hi = cb;
-        if (col < lo) col = lo; if (col > hi) col = hi;
-        uint32_t tex = (uint32_t)seg * 16 + (uint32_t)col * 64;
         /* rows the wall covers: |(Y + 0.5 - yc) / S| < hh */
         int y_lo = (int)ceil(yc - hh * S - 0.5), y_hi = (int)floor(yc + hh * S - 0.5);
         if (y_lo < vy0 * S) y_lo = vy0 * S;
@@ -565,29 +625,18 @@ static int compose_inner(uint32_t *out, int S, int *w, int *h)
         }
     }
     /* sprites, back to front as the game drew them, over everything but the
-     * overlays the game put on top of them (text, the fizzle); a side pass's
-     * sprites are moved into the wide view and kept to their strip */
-    for (int si = 0; si < nsprs_shown; si++) {
-        const Sprite *sp = &sprs_shown[si];
-        double xc = sp->xc, ht = sp->height;
-        int Xlo = vx0 * S, Xhi = (vx1 + 1) * S;
-        if (sp->pass) {
-            if (!wide) continue;
-            int k = sp->pass - 1;
-            double pr = atan((cx - xc) / F), psi = pr + (k ? -side_rot : side_rot);
-            if (fabs(psi) >= M_PI / 2 - 0.01) continue;
-            xc = cx - F * tan(psi);
-            ht *= cos(pr) / cos(psi);
-            if (k == 0) { Xlo = g0 * S; Xhi = vx0 * S; }
-            else        { Xlo = (vx1 + 1) * S; Xhi = (g0 + nv) * S; }
-        }
+     * overlays the game put on top of them (text, the fizzle) */
+    place_sprites(wide, g0, nv, vx0, vx1, cx, F);
+    for (int si = 0; si < nspr_at; si++) {
+        const SprAt *at = &spr_at[si];
+        const Sprite *sp = at->sp;
+        double xc = at->xc, ht = at->ht;
         double k = ht / 64.0, hh = ht / 2.0;   /* texel width; half height */
-        if (k <= 0) continue;
         int left = seg_word(sp->seg, 0), right = seg_word(sp->seg, 2);
         double xa = xc + (left - 32) * k, xb = xc + (right + 1 - 32) * k;
         int X0 = (int)floor(xa * S), X1 = (int)ceil(xb * S);
-        if (X0 < Xlo) X0 = Xlo;
-        if (X1 > Xhi) X1 = Xhi;
+        if (X0 < at->xlo * S) X0 = (int)(at->xlo * S);
+        if (X1 > at->xhi * S) X1 = (int)(at->xhi * S);
         for (int X = X0; X < X1; X++) {
             if (!sp->top && wallh[X - g0 * S] > ht * 4.0) continue;   /* behind a wall (wall units) */
             int c = (int)floor(((X + 0.5) / S - xc) / k) + 32;
@@ -612,5 +661,211 @@ static int compose_inner(uint32_t *out, int S, int *w, int *h)
             }
         }
     }
+    V.ok = 1; V.S = S; V.OX = OX; V.W = W;
+    V.g0 = g0; V.nv = nv; V.vx0 = vx0; V.vw = vw; V.vy0 = vy0; V.vh = vy1 - vy0 + 1;
+    V.F = F; V.cx = vx0 + cx; V.yc = yc / S;
+    memcpy(V.pal, pal, sizeof pal);
     return 1;
+}
+
+/* ---- DLSS -------------------------------------------------------------------
+ *
+ * With DLSS on (--dlss, F8; built only with the optional SDK, docs/dlss.md),
+ * the view the compositor drew is drawn again, by dlss_view, at DLSS's render
+ * size with a different sub-pixel jitter each frame, alongside what DLSS
+ * needs to accumulate those frames into one at the output size:
+ *
+ *   depth   from each pixel's height on screen: a wall or sprite of half
+ *           height hh is at K / hh tiles, a floor or ceiling pixel dy rows
+ *           from the horizon at K / dy. K is measured every frame from the
+ *           raycaster's own hit points (distance along the view times hh).
+ *   motion  exact for everything that does not move: the pixel's world
+ *           position (from its depth and ray) projected through the previous
+ *           frame's eye. Sprites get the same, which is right for objects and
+ *           corpses and close for walking actors; the weapon moves with the
+ *           eye (no motion) and is marked so DLSS trusts the current frame
+ *           there, since its animation frames are not motion.
+ *
+ * Overlays the game drew on the view (text, the fizzle fade) stay on top. */
+int dlss_available(void);
+int dlss_render_size(int ow, int oh, int mode, int *rw, int *rh);
+int dlss_eval(const uint32_t *color, const float *depth, const float *mv, const uint8_t *bias,
+              int rw, int rh, float jx, float jy, int reset, uint32_t *out, int ow, int oh, int mode);
+#ifndef WOLF_DLSS                       /* built without the SDK: never available */
+int dlss_available(void) { return 0; }
+int dlss_render_size(int ow, int oh, int mode, int *rw, int *rh) { (void)ow; (void)oh; (void)mode; (void)rw; (void)rh; return 0; }
+int dlss_eval(const uint32_t *c, const float *d, const float *m, const uint8_t *b, int rw, int rh, float jx, float jy,
+              int reset, uint32_t *out, int ow, int oh, int mode)
+{ (void)c; (void)d; (void)m; (void)b; (void)rw; (void)rh; (void)jx; (void)jy; (void)reset; (void)out; (void)ow; (void)oh; (void)mode; return 0; }
+void dlss_shutdown(void) {}
+#endif
+
+static int dlss_mode;                    /* 0 off, 1 DLAA, 2 quality, 3 balanced, 4 performance, 5 ultra performance */
+static const char *dlss_names[] = { "off", "dlaa", "quality", "balanced", "performance", "ultra" };
+int hires_dlss_mode(void) { return dlss_mode; }
+const char *hires_dlss_name(int m) { return m >= 0 && m < 6 ? dlss_names[m] : "?"; }
+int hires_dlss_parse(const char *s) { for (int i = 0; i < 6; i++) if (!strcmp(s, dlss_names[i])) return i; return -1; }
+int hires_set_dlss(int m)
+{
+    if (m && !dlss_available()) { dlss_mode = 0; return 0; }
+    dlss_mode = m;
+    return 1;
+}
+
+static double halton(int i, int b) { double f = 1, r = 0; for (; i > 0; i /= b) { f /= b; r += f * (i % b); } return r; }
+
+static void dlss_view(uint32_t *out)
+{
+    static uint32_t *col, *res;
+    static float *dep, *mv;
+    static uint8_t *bias;
+    static size_t cap, rcap;
+    static Cam prev;
+    static int frame, last_w, last_h, last_ox;
+    static double K = 1;
+    const int S = V.S, ow_ = V.nv * S, oh_ = V.vh * S;
+    int rw, rh;
+    if (!dlss_render_size(ow_, oh_, dlss_mode - 1, &rw, &rh)) return;
+    if ((size_t)rw * rh > cap) {
+        cap = (size_t)rw * rh;
+        free(col); free(dep); free(mv); free(bias);
+        col = malloc(cap * 4); dep = malloc(cap * 4); mv = malloc(cap * 8); bias = malloc(cap);
+    }
+    if ((size_t)ow_ * oh_ > rcap) { rcap = (size_t)ow_ * oh_; free(res); res = malloc(rcap * 4); }
+    if (!col || !dep || !mv || !bias || !res) return;
+
+    /* the eye, and K from this frame's hit points (median of hh x distance) */
+    const Cam cam = cam_shown;
+    double Dx = cos(cam.a), Dy = -sin(cam.a), Lx = -sin(cam.a), Ly = -cos(cam.a);   /* forward, left; y runs south */
+    {
+        static double ks[320];
+        int n = 0;
+        for (int i = 0; i < 320; i++)
+            if (shown[i].ok && shown[i].wh) {
+                double d = (shown[i].hx - cam.ex) * Dx + (shown[i].hy - cam.ey) * Dy;
+                if (d > 0.05) ks[n++] = shown[i].wh / 8.0 * d;
+            }
+        if (n) {
+            for (int i = 1; i < n; i++) for (int j = i; j > 0 && ks[j] < ks[j - 1]; j--) { double t = ks[j]; ks[j] = ks[j - 1]; ks[j - 1] = t; }
+            K = ks[n / 2];
+        }
+    }
+    int reset = !prev.ok || !cam.ok || ow_ != last_w || oh_ != last_h || V.OX + V.g0 * S != last_ox
+                || hypot(cam.ex - prev.ex, cam.ey - prev.ey) > 2 || fabs(remainder(cam.a - prev.a, 2 * M_PI)) > M_PI / 4;
+    double pDx = cos(prev.a), pDy = -sin(prev.a), pLx = -sin(prev.a), pLy = -cos(prev.a);
+
+    int phases = (int)(8.0 * ow_ * oh_ / ((double)rw * rh));
+    if (phases < 8) phases = 8; if (phases > 64) phases = 64;
+    frame = frame % phases + 1;
+    /* This sample is at the pixel centre + (jx, jy); DLSS takes the offset
+     * the other way round. Measured: with +jx a still view converged ~40%
+     * further from the plain render (docs/dlss.md). */
+    const double jx = halton(frame, 2) - 0.5, jy = halton(frame, 3) - 0.5;
+    const double sx = (double)V.nv / rw, sy = (double)V.vh / rh;   /* game pixels per render pixel */
+    const uint8_t *mem = g_cpu.mem;
+
+    /* motion: a pixel at game (gx, gy) whose depth is d, through the previous eye */
+    #define MOTION(i, gx, gy, d, still) do {                                        \
+        float *m_ = &mv[2 * (i)]; m_[0] = m_[1] = 0;                                \
+        if (!(still) && !reset) {                                                   \
+            double t_ = (V.cx - (gx)) / V.F, wx = cam.ex + (d) * (Dx + t_ * Lx), wy = cam.ey + (d) * (Dy + t_ * Ly); \
+            double rx = wx - prev.ex, ry = wy - prev.ey;                            \
+            double d2 = rx * pDx + ry * pDy, l2 = rx * pLx + ry * pLy;              \
+            if (d2 > 0.05) {                                                        \
+                m_[0] = (float)((V.cx - V.F * l2 / d2 - (gx)) / sx);                \
+                m_[1] = (float)((V.yc + ((gy) - V.yc) * (d) / d2 - (gy)) / sy);     \
+            }                                                                       \
+        }                                                                           \
+    } while (0)
+
+    static double colhh[4096];            /* 640 columns x 6, the widest frame */
+    for (int X = 0; X < rw; X++) {
+        double gx = V.g0 + (X + 0.5 + jx) * sx, gxc = V.g0 + (X + 0.5) * sx;
+        uint32_t tex = 0; double hh = 0;
+        int wall = wall_sample(gx - 0.5 - V.g0, V.nv, &tex, &hh) && hh > 0;
+        colhh[X < 4096 ? X : 4095] = wall ? hh : 0;
+        for (int Y = 0; Y < rh; Y++) {
+            size_t i = (size_t)Y * rw + X;
+            double gy = V.vy0 + (Y + 0.5 + jy) * sy, gyc = V.vy0 + (Y + 0.5) * sy, dy = gy - V.yc;
+            double he;
+            if (wall && fabs(dy) < hh) {
+                int r = (int)floor(32 + dy / hh * 32);
+                if (r < 0) r = 0; if (r > 63) r = 63;
+                col[i] = V.pal[mem[(tex + r) & 0xFFFFF]];
+                he = hh;
+            } else {
+                col[i] = V.pal[dy < 0 ? ceil_c : floor_c];
+                he = fabs(dy) > 0.25 ? fabs(dy) : 0.25;
+            }
+            double d = K / he;
+            dep[i] = (float)(d > 0.05 ? 0.05 / d : 1.0);
+            bias[i] = 0;
+            MOTION(i, gxc, gyc, d, 0);
+        }
+    }
+    for (int si = 0; si < nspr_at; si++) {
+        const SprAt *at = &spr_at[si];
+        const Sprite *sp = at->sp;
+        double k = at->ht / 64.0, hs = at->ht / 2.0, d = sp->top ? 0.05 : K / hs;
+        int left = seg_word(sp->seg, 0), right = seg_word(sp->seg, 2);
+        double xa = at->xc + (left - 32) * k, xb = at->xc + (right + 1 - 32) * k;
+        if (xa < at->xlo) xa = at->xlo;
+        if (xb > at->xhi) xb = at->xhi;
+        int X0 = (int)floor((xa - V.g0) / sx - 0.5 - jx), X1 = (int)ceil((xb - V.g0) / sx - 0.5 - jx);
+        if (X0 < 0) X0 = 0; if (X1 > rw) X1 = rw;
+        int Y0 = (int)floor((V.yc - hs - V.vy0) / sy - 0.5 - jy), Y1 = (int)ceil((V.yc + hs - V.vy0) / sy - 0.5 - jy) + 1;
+        if (Y0 < 0) Y0 = 0; if (Y1 > rh) Y1 = rh;
+        for (int X = X0; X < X1; X++) {
+            double gx = V.g0 + (X + 0.5 + jx) * sx;
+            if (gx < at->xlo || gx >= at->xhi) continue;
+            if (!sp->top && colhh[X < 4096 ? X : 4095] > hs) continue;   /* behind this column's wall */
+            int c = (int)floor((gx - at->xc) / k) + 32;
+            if (c < left || c > right) continue;
+            unsigned cmd0 = seg_word(sp->seg, 4 + 2 * (c - left));
+            for (int Y = Y0; Y < Y1; Y++) {
+                double gy = V.vy0 + (Y + 0.5 + jy) * sy;
+                int r = (int)floor(32 + (gy - V.yc) / hs * 32);
+                unsigned cmd = cmd0;
+                for (int guard = 0; guard < 64; guard++, cmd += 6) {
+                    int end = seg_word(sp->seg, cmd) >> 1;
+                    if (!end) break;
+                    int st = seg_word(sp->seg, cmd + 4) >> 1;
+                    if (r < st || r >= end) continue;
+                    size_t i = (size_t)Y * rw + X;
+                    col[i] = V.pal[mem[((uint32_t)sp->seg * 16 + (uint16_t)(seg_word(sp->seg, cmd + 2) + r)) & 0xFFFFF]];
+                    dep[i] = (float)(0.05 / d > 1 ? 1 : 0.05 / d);
+                    bias[i] = sp->top ? 255 : 0;
+                    MOTION(i, V.g0 + (X + 0.5) * sx, V.vy0 + (Y + 0.5) * sy, d, sp->top);
+                    break;
+                }
+            }
+        }
+    }
+    #undef MOTION
+    if (!dlss_eval(col, dep, mv, bias, rw, rh, (float)-jx, (float)-jy, reset, res, ow_, oh_, dlss_mode - 1))
+        return;
+    prev = cam; last_w = ow_; last_h = oh_; last_ox = V.OX + V.g0 * S;
+    /* into the frame, under whatever the game drew over the view */
+    const int x0 = V.OX + V.g0 * S, y0 = V.vy0 * S;
+    for (int Y = 0; Y < oh_; Y++) {
+        int gy = (y0 + Y) / S;
+        uint32_t *o = out + (size_t)(y0 + Y) * V.W + x0;
+        const uint32_t *r = res + (size_t)Y * ow_;
+        for (int X = 0; X < ow_; X++) {
+            int gxi = (int)floor((double)(x0 + X - V.OX) / S);
+            if (gxi >= 0 && gxi < 320 && ow[gy][gxi] == DRAW_OTHER) continue;
+            o[X] = r[X];
+        }
+    }
+}
+
+/* The whole screen at S x 320 by S x 200, the 3D view redrawn (and through
+ * DLSS when it is on). */
+int hires_compose(uint32_t *out, int S, int *w, int *h)
+{
+    uint64_t t = host_us();
+    int r = compose_inner(out, S, w, h);
+    if (r && V.ok && dlss_mode) dlss_view(out);
+    c_us += host_us() - t; c_n++;
+    return r;
 }

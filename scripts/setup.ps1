@@ -17,7 +17,7 @@
   Nothing is downloaded or bundled from the game: the files come from your
   own install, and everything generated from them stays in work\ and build\.
 #>
-param([string]$GameDir = "", [switch]$Yes)
+param([string]$GameDir = "", [switch]$Yes, [switch]$Dlss)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path $PSScriptRoot -Parent
 Set-Location $Root
@@ -155,6 +155,23 @@ if ($env:PCRECOMP_HOME -and (Test-Path "$env:PCRECOMP_HOME\tools\lift\lift16.py"
     }
 }
 $env:PCRECOMP_HOME = $pcr
+
+# ---- optional: NVIDIA DLSS --------------------------------------------------------
+# Not part of the default build: NVIDIA's SDK under NVIDIA's licence, fetched
+# into external\dlss-sdk only if you say so (docs\dlss.md). -Yes does not
+# accept a third-party licence for you; -Dlss does.
+$hasDlss = Test-Path (Join-Path $Root "external\dlss-sdk\bin\nvngx_dlss.dll")
+$nvidia = (Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "NVIDIA" })
+if (-not $hasDlss -and ($Dlss -or $nvidia)) {
+    $want = $Dlss
+    if (-not $want -and -not $Yes) {
+        Say "Optional: NVIDIA DLSS for the 3D view (an RTX GPU; about 65 MB). It is NVIDIA's SDK under NVIDIA's licence:"
+        Say "  https://github.com/NVIDIA/DLSS/blob/v310.9.1/LICENSE.txt"
+        $want = Ask "Download it? Answering yes means you accept that licence"
+    }
+    if ($want) { Run "downloading the DLSS SDK into external\dlss-sdk" { & $py tools\get_dlss.py --accept-license } }
+    else { Say "  (no DLSS: run Setup again, or py tools\get_dlss.py, to add it later)" }
+}
 
 # ---- 4. lift + build -------------------------------------------------------------
 foreach ($g in $found) {

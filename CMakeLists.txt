@@ -50,6 +50,21 @@ foreach(game wl6)
         add_executable(wolf3d_${game} WIN32 ${RUNTIME} ${lifted})
         target_include_directories(wolf3d_${game} PRIVATE src "${gen}" "${PCRECOMP_HOME}/runtime")
         target_link_libraries(wolf3d_${game} PRIVATE ymfm user32 gdi32 winmm d3d11 dxgi dxguid)
+        # Optional: NVIDIA DLSS, only when its SDK has been downloaded into
+        # external/dlss-sdk (tools/get_dlss.py). The SDK is NVIDIA's, never in
+        # this repository; without it the build is the same minus --dlss.
+        set(DLSS_SDK "${CMAKE_SOURCE_DIR}/external/dlss-sdk" CACHE PATH "NVIDIA DLSS SDK (tools/get_dlss.py)")
+        if(EXISTS "${DLSS_SDK}/include/nvsdk_ngx.h" AND EXISTS "${DLSS_SDK}/lib/nvsdk_ngx_s.lib")
+            target_sources(wolf3d_${game} PRIVATE src/dlss.cpp)
+            target_include_directories(wolf3d_${game} PRIVATE "${DLSS_SDK}/include")
+            target_compile_definitions(wolf3d_${game} PRIVATE WOLF_DLSS)
+            target_link_libraries(wolf3d_${game} PRIVATE "${DLSS_SDK}/lib/nvsdk_ngx_s.lib")
+            add_custom_command(TARGET wolf3d_${game} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${DLSS_SDK}/bin/nvngx_dlss.dll" "$<TARGET_FILE_DIR:wolf3d_${game}>")
+            message(STATUS "wolf3d_${game}: with DLSS (${DLSS_SDK})")
+        else()
+            message(STATUS "wolf3d_${game}: without DLSS (py tools/get_dlss.py adds it)")
+        endif()
         if(WOLF_TRACE)
             target_compile_definitions(wolf3d_${game} PRIVATE RECOMP_TRACE WOLF_DEBUG)
             target_compile_options(wolf3d_${game} PRIVATE /Zi /Oy-)

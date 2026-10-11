@@ -24,6 +24,11 @@ static int hires_on;
 int hires_compose(uint32_t *out, int S, int *w, int *h);
 void hires_set_wide(double aspect);
 int hires_wide_cols(void);
+int hires_set_dlss(int m);
+int hires_dlss_mode(void);
+int hires_dlss_parse(const char *s);
+const char *hires_dlss_name(int m);
+void dlss_shutdown(void);
 static double wide_aspect, frame_aspect = 4.0 / 3;   /* the chosen widescreen; this frame's shape */
 static int wide_on;
 
@@ -387,6 +392,7 @@ static void ini_save(void)
     WritePrivateProfileStringA("present", "look", look ? "1" : "0", ini_path);
     WritePrivateProfileStringA("present", "fullscreen", (GetWindowLong(wnd, GWL_STYLE) & WS_OVERLAPPEDWINDOW) ? "0" : "1", ini_path);
     WritePrivateProfileStringA("present", "hires", hires_on ? (wide_on ? "wide" : "on") : "off", ini_path);
+    WritePrivateProfileStringA("present", "dlss", hires_dlss_name(hires_dlss_mode()), ini_path);
 }
 
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
@@ -407,6 +413,14 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             return 0;
         }
         if (wp == VK_F9) { if (!up) look ^= 1; return 0; }
+        if (wp == VK_F8) {                            /* DLSS: off -> DLAA -> quality -> balanced -> performance -> */
+            if (!up) {
+                int m = (hires_dlss_mode() + 1) % 5;
+                if (!hires_set_dlss(m)) fprintf(stderr, "[dlss] not available in this build or on this GPU\n");
+                else fprintf(stderr, "[dlss] %s\n", hires_dlss_name(m));
+            }
+            return 0;
+        }
         if (wp == VK_F10) {                           /* widescreen -> original -> hi-res 4:3 -> */
             if (!up) {
                 if (hires_on && wide_on) { hires_on = 0; wide_on = 0; }
@@ -558,12 +572,22 @@ void host_audio(const int16_t *s, int frames)
 void host_init(void)
 {
     char ini_hires[16] = "wide";                         /* F10's last choice, from wolf3d.ini */
+    char ini_dlss[16] = "dlaa";                          /* F8's */
 #ifdef _WIN32
     if (!g_opt.headless) {
         ini_load();
         GetPrivateProfileStringA("present", "hires", "wide", ini_hires, sizeof ini_hires, ini_path);
+        GetPrivateProfileStringA("present", "dlss", "dlaa", ini_dlss, sizeof ini_dlss, ini_path);
     }
 #endif
+    {   /* DLSS: DLAA in a window when the build and the GPU have it, off
+         * headless (deterministic runs) unless asked for; docs/dlss.md */
+        const char *dl = g_opt.dlss ? g_opt.dlss : g_opt.headless ? "off" : ini_dlss;
+        int m = hires_dlss_parse(dl);
+        if (m < 0) fprintf(stderr, "[dlss] unknown mode '%s' (off, dlaa, quality, balanced, performance, ultra)\n", dl);
+        else if (m && !hires_set_dlss(m) && g_opt.dlss)
+            fprintf(stderr, "[dlss] not available (a build without the SDK, or not an RTX GPU): running without\n");
+    }
     int hires_cli = g_opt.hires >= 0;
     if (g_opt.hires < 0) g_opt.hires = g_opt.headless ? 0 : 4;   /* on in a window */
     hires_on = g_opt.hires > 0 && (hires_cli || strcmp(ini_hires, "off"));
@@ -654,5 +678,6 @@ void host_shutdown(void)
 #ifdef _WIN32
     if (wout) { waveOutReset(wout); waveOutClose(wout); }
     if (wnd) { ini_save(); DestroyWindow(wnd); }
+    dlss_shutdown();
 #endif
 }

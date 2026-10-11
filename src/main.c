@@ -19,6 +19,9 @@
  *                     in a window, off headless; F10 cycles it, original, 4:3)
  *   --route "MS;go X,Y;use;..."  steer the player along waypoints (tests; see host.c)
  *   --scale MODE      sharp (default), smooth, crt, nearest or integer (F12 cycles)
+ *   --dlss MODE       the 3D view through NVIDIA DLSS: off, dlaa, quality, balanced,
+ *                     performance, ultra (F8 cycles; needs a build with the optional
+ *                     SDK and an RTX GPU; default dlaa in a window, off headless)
  *   --trace           log DOS calls to stderr
  *   --shot FILE.bmp   write the last frame at exit
  *   --shot-at LIST    frames at emulated times: "ms:file.bmp,..."
@@ -80,6 +83,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--fullscreen")) g_opt.fullscreen = 1;
         else if (!strcmp(a, "--realtime")) g_opt.realtime = 1;
         else if (!strcmp(a, "--gdi")) g_opt.gdi = 1;
+        else if (!strcmp(a, "--dlss") && v) { g_opt.dlss = v; i++; }
         else if (!strcmp(a, "--scale") && v) { g_opt.scale_name = v; i++; }
         else if (!strcmp(a, "--hires") && v) { g_opt.hires = atoi(v); hires_set = 1; i++; }
         else if (!strcmp(a, "--widescreen") && v) { g_opt.wide = v; i++; }

@@ -30,6 +30,7 @@ typedef struct {
     const char *wide;         /* widescreen aspect: "16:9", "21:9", "off"; NULL default */
     int realtime;             /* headless, but on the wall clock */
     int gdi;                  /* --gdi: present through GDI, not Direct3D 11 */
+    const char *dlss;         /* --dlss: off | dlaa | quality | balanced | performance | ultra */
 } Options;
 extern Options g_opt;
 

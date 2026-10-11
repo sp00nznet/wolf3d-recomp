@@ -43,3 +43,6 @@ setup.log
 /screenshots/
 *.lnk
 wolf3d.ini
+
+# The optional NVIDIA DLSS SDK (tools/get_dlss.py): NVIDIA-licensed, never committed.
+external/
