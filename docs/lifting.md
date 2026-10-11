@@ -117,4 +117,5 @@ All inherited from Blake Stone and renamed:
 | `WOLF_POS=1` | the player's tile, position and angle every 250 ms of game time |
 | `WOLF_WARP=ms:x,y,angle` | move the player there once (looking around while writing a script) |
 | `WOLF_MISSDUMP=1` | the bytes at every dispatch miss |
+| `WOLF_PERF=1` | in a window, once a second: frames, compose time (redraw, DLSS, evaluate), present time, game polls |
 | `--trace` | DOS calls, Sound Blaster commands |

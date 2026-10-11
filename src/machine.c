@@ -149,11 +149,13 @@ int machine_port_out(uint16_t port, uint8_t v)
 }
 
 static int warned_ports[0x400];
+uint64_t g_perf_polls, g_perf_audio_us, g_perf_ports, g_perf_inner, g_perf_dlss, g_perf_eval, g_perf_render;   /* WOLF_PERF (host.c) */
 
 uint8_t port_in8(CPU *cpu, uint16_t port)
 {
     uint8_t v = 0xFF;
     (void)cpu;
+    g_perf_ports++;
     if (vga_port_in(port, &v) || audio_port_in(port, &v) || machine_port_in(port, &v)) return v;
     if (port < 0x400 && !warned_ports[port]++) trace("[port] in %03X\n", port);
     return 0xFF;
@@ -162,6 +164,7 @@ uint8_t port_in8(CPU *cpu, uint16_t port)
 void port_out8(CPU *cpu, uint16_t port, uint8_t v)
 {
     (void)cpu;
+    g_perf_ports++;
     if (vga_port_out(port, v) || audio_port_out(port, v) || machine_port_out(port, v)) return;
     if (port < 0x400 && !warned_ports[port]++) trace("[port] out %03X = %02X\n", port, v);
 }
@@ -339,8 +342,9 @@ void recomp_tick(CPU *cpu)
     g_recomp_tick_budget = 2000;
     if (busy || g_tick_hold) return;
     busy = 1;
-    polls++;
+    polls++; g_perf_polls++;
     virt_us += POLL_US;
+    uint64_t pa = host_us();
 
     uint64_t target = (uint64_t)((double)emu_us() * (PIT_HZ / 1e6));
     if (target > next_t0 + (uint64_t)(PIT_HZ / 10)) {
@@ -358,6 +362,7 @@ void recomp_tick(CPU *cpu)
     }
     if (t0_pending && irq_ok(cpu, 0)) { t0_pending = 0; irq(cpu, 0); }
     if (target > emu_now) { audio_advance(target); emu_now = target; }
+    g_perf_audio_us += host_us() - pa;
 
     while (kq_head != kq_tail && irq_ok(cpu, 1)) {
         port60 = kq[kq_head];

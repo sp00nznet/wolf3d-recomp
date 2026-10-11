@@ -24,7 +24,8 @@ All notable changes to this project are documented here. The format follows
 - Conformance harness for the game, 17/17: boot, play, digitized sound, hi-res,
   widescreen, save and load (`tools/conformance.py`, docs/conformance.md).
 - `Setup.cmd` finds Steam's `Wolfenstein 3D\base` (or GOG's) and builds a shortcut.
-- `WOLF_MISSDUMP=1`: the bytes at a dispatch miss.
+- `WOLF_MISSDUMP=1`: the bytes at a dispatch miss. `WOLF_PERF=1`: where each
+  second of wall time goes (compose, redraw, DLSS, present, game polls).
 - The art, redrawn by an AI (optional; F6, `--art`): `tools/upscale_art.py`
   runs every wall and sprite page of your VSWAP through Real-ESRGAN at 4x
   (walls tiled 3x3 for seamless wrap, sprites with an upscaled coverage mask)
@@ -41,6 +42,17 @@ All notable changes to this project are documented here. The format follows
   The SDK is never in the repository: `tools/get_dlss.py` fetches it under
   NVIDIA's licence, Setup offers it on NVIDIA GPUs, and CMake builds the DLSS
   path only when it is there. An 18th conformance check runs when it is.
+
+### Fixed
+- Fades, the bonus and damage flashes, startup and New Game crawled at 1-2 fps
+  in a window. They wait for vertical retrace, and the 1.4 ms retrace window
+  was missed whenever a frame's compose ran across it, so each step waited
+  through several composes. A retrace that passed while the host was busy is
+  now reported on the next read, as a real CPU polling 3DAh would see it.
+- With the upscaled art and DLSS, composing a frame on the game's thread left
+  the game too little time. The compositor's and the DLSS pass's columns now
+  run across the CPU's cores (`src/pool.c`), and a present waits until the game
+  has had as much host time as the last present took.
 
 ### Changed (from the Blake Stone runtime this started as)
 - VGA input status (3DAh): display-disabled now comes in runs of reads, as it does

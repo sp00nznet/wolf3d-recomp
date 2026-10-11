@@ -744,13 +744,38 @@ void host_frame(void)
 #ifdef _WIN32
     if (!wnd) return;
     if (now - last_present < (uint64_t)(PIT_HZ / 70)) return;
+    /* Never let presenting starve the game: it all runs on this thread, and
+     * a present that costs C ms waits until the game has had C ms too. */
+    static uint64_t host_last, host_cost;
+    uint64_t h = host_us();
+    if (h - host_last < 2 * host_cost) return;
     last_present = now;
     MSG msg;
     while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageA(&msg); }
     if (GetForegroundWindow() == wnd) pad_poll();
     if (quit_req) dos_exit(0);
+    uint64_t t0 = host_us();
     compose();
+    uint64_t t1 = host_us();
     HDC dc = GetDC(wnd); paint(dc); ReleaseDC(wnd, dc);
+    host_last = h; host_cost = host_us() - h;
+    {   /* WOLF_PERF=1: once a second, where the wall time went (docs/lifting.md, debugging kit) */
+        static int on = -1; static uint64_t start, cms, pms, n;
+        extern uint64_t g_perf_polls, g_perf_audio_us, g_perf_ports;
+        if (on < 0) { on = getenv("WOLF_PERF") != NULL; start = host_us(); }
+        if (on) {
+            uint64_t t2 = host_us();
+            cms += t1 - t0; pms += t2 - t1; n++;
+            if (t2 - start >= 1000000) {
+                extern uint64_t g_perf_inner, g_perf_dlss, g_perf_eval;
+                fprintf(stderr, "[perf] %llu frames, compose %.1f ms (redraw %.1f, dlss %.1f of which eval %.1f), present %.1f ms, polls %llu\n",
+                        (unsigned long long)n, cms / 1000.0, g_perf_inner / 1000.0, g_perf_dlss / 1000.0, g_perf_eval / 1000.0,
+                        pms / 1000.0, (unsigned long long)g_perf_polls);
+                start = t2; cms = pms = n = 0; g_perf_polls = g_perf_audio_us = g_perf_ports = 0;
+                g_perf_inner = g_perf_dlss = g_perf_eval = 0;
+            }
+        }
+    }
 #endif
 }
 

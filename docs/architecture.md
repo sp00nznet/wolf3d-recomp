@@ -108,6 +108,20 @@ count it is waiting on.
 If the host falls far behind (a debugger, a slow disk), the backlog of ticks is
 dropped rather than replayed, which the game sees as a short time warp.
 
+**Vertical retrace is never missed.** The game paces its fades and palette
+flashes by waiting for retrace (3DAh bit 3), which lasts 1.4 ms of each 14.3 ms
+refresh. In a window, presenting a frame can take longer than that, and a
+retrace that came and went while the host was busy would be missed, so a fade
+step waited through several frames. `vga.c` reports such a retrace on the
+next read, which is what a real CPU polling the register would have seen.
+
+**Presenting never starves the game.** Everything runs on the game's thread.
+A present that took C ms isn't repeated until the game has had C ms of its
+own, and the compositor spreads its columns over the CPU's cores
+([`src/pool.c`](../src/pool.c)). `WOLF_PERF=1` prints, once a second, the time
+spent composing (the redraw, DLSS and its evaluation), presenting, and how
+often the game was polled.
+
 **Which clock.** In a window, emulated time is the wall clock, so the game
 plays at its real speed. Headless, it is deterministic: each `recomp_tick` (one
 per 2000 back-edges, or per waiting DOS/BIOS call) advances it by 300 µs, and

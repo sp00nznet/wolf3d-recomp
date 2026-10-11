@@ -40,7 +40,7 @@ add_library(ymfm STATIC
     third_party/ymfm/ymfm_opl.cpp third_party/ymfm/ymfm_adpcm.cpp third_party/ymfm/ymfm_pcm.cpp)
 target_include_directories(ymfm PUBLIC third_party/ymfm)
 
-set(RUNTIME src/main.c src/machine.c src/dos.c src/vga.c src/audio.c src/x87.c src/present_d3d.c
+set(RUNTIME src/main.c src/machine.c src/dos.c src/vga.c src/audio.c src/x87.c src/present_d3d.c src/pool.c
             src/host.c src/hires.c src/opl.cpp)
 
 foreach(game wl6)

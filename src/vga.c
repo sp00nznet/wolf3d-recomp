@@ -179,13 +179,24 @@ static uint64_t t0_us;
 static uint8_t input_status(void)
 {
     static unsigned n;
+    static uint64_t last;
     uint64_t us = emu_us() - t0_us;
     uint64_t ph = us % 14286;
+    int retrace = ph >= 12900;
+    /* A retrace that began and ended since the last read -- the host was
+     * busy presenting a frame -- is reported now, once. A real CPU polling
+     * 3DAh never misses one; without this, a fade that waits for each
+     * retrace missed most of them and crawled (a compose takes longer than
+     * the 1.4 ms window). */
+#define STARTS(t) ((t) >= 12900 ? ((t) - 12900) / 14286 + 1 : 0)     /* retraces begun by t */
+    if (!retrace && STARTS(us) > STARTS(last)) retrace = 1;
+#undef STARTS
+    last = us;
     /* display enable flickers per line, but each blank lasts several reads:
      * Wolf3D's page flip wants five blanked reads in a row (outside vretrace)
      * before it writes the CRTC start address */
     uint8_t de = (n++ & 7) < 6;
-    return (uint8_t)(((ph >= 12900) ? 0x08 : 0) | ((ph >= 12900) ? 1 : de));
+    return (uint8_t)((retrace ? 0x08 : 0) | (retrace ? 1 : de));
 }
 
 int vga_port_in(uint16_t port, uint8_t *v)
