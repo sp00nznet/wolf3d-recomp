@@ -32,6 +32,7 @@ typedef struct {
     int gdi;                  /* --gdi: present through GDI, not Direct3D 11 */
     const char *mouse_aim;    /* --mouse-aim on | off (NULL: wolf3d.ini, else on) */
     double mouse_sens;        /* --mouse-sens: turn per mickey, 1 = the game's own (0: wolf3d.ini) */
+    const char *art;          /* --art on | off: the upscaled art (tools/upscale_art.py) */
     const char *dlss;         /* --dlss: off | dlaa | quality | balanced | performance | ultra */
 } Options;
 extern Options g_opt;

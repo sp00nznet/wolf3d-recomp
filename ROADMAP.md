@@ -13,6 +13,9 @@
 
 ## Later
 
+- **Hand-picked art.** Some pages upscale worse than others (the purple
+  organic walls lose their grain); a per-page model choice, or a blend with
+  the original's grain, would help those.
 - **DLSS for moving surfaces.** Doors and push walls slide, and walking actors
   move; they get the camera's motion only. Their own motion is in the game's
   state (door positions, actor x/y) and could go into the motion vectors.

@@ -17,7 +17,7 @@
   Nothing is downloaded or bundled from the game: the files come from your
   own install, and everything generated from them stays in work\ and build\.
 #>
-param([string]$GameDir = "", [switch]$Yes, [switch]$Dlss)
+param([string]$GameDir = "", [switch]$Yes, [switch]$Dlss, [switch]$Art)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path $PSScriptRoot -Parent
 Set-Location $Root
@@ -179,6 +179,19 @@ foreach ($g in $found) {
 }
 Run "configuring the build" { cmake -B build -G "Visual Studio 17 2022" -A x64 "-DPCRECOMP_HOME=$pcr" }
 Run "compiling (a few minutes: the lifted C is large)" { cmake --build build --config Release -- -m }
+
+# ---- optional: the game's art, redrawn 4x by an AI upscaler -------------------
+# Real-ESRGAN (ncnn/Vulkan build, MIT; about 45 MB, into external\realesrgan)
+# run over your own VSWAP.WL6; the result stays in work\wl6\art (docs\art.md).
+if (-not (Test-Path (Join-Path $Root "work\wl6\art\art.bin"))) {
+    $want = $Art
+    if (-not $want -and -not $Yes) {
+        Say "Optional: redraw the walls and sprites 4x with an AI upscaler (Real-ESRGAN, MIT; ~45 MB download, ~30 s on a GPU)."
+        $want = Ask "Do it?"
+    }
+    if ($want) { Run "upscaling the game's art (Real-ESRGAN)" { & $py tools\upscale_art.py } }
+    else { Say "  (no upscaled art: py tools\upscale_art.py adds it later)" }
+}
 
 # ---- 5. shortcut ------------------------------------------------------------------
 $shell = New-Object -ComObject WScript.Shell

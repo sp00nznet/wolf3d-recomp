@@ -48,6 +48,7 @@ conformance run.
 | Saving and loading | ✅ |
 | Hi-res 3D view: walls, doors, actors, objects, the weapon (`--hires 1`–`6`) | ✅ |
 | Widescreen 16:9 / 21:9 (the game's own raycaster, turned) | ✅, at the full view size |
+| Walls and sprites redrawn 4x by an AI upscaler (optional, made locally) | ✅ |
 | NVIDIA DLSS / DLAA on the 3D view (optional download, RTX GPU) | ✅ |
 | Direct3D 11 presenter: sharp-bilinear, smooth, CRT, nearest, integer | ✅ |
 | Borderless fullscreen, settings kept in `wolf3d.ini` | ✅ |
@@ -56,7 +57,7 @@ conformance run.
 | Gamepad (XInput, as keys) | implemented, untested |
 | PC speaker | modelled, untested |
 | Episodes 2–6, a full playthrough | not yet tried |
-| **Conformance** ([docs](docs/conformance.md)) | **18/18**, 19/19 with DLSS |
+| **Conformance** ([docs](docs/conformance.md)) | **18/18**; 20/20 with the art and DLSS |
 
 Everything marked ✅ was seen working, in scripted headless runs (which the
 conformance harness repeats) and in a window on a virtual monitor. Nobody has
@@ -82,6 +83,16 @@ turned left and right about the eye. Every byte of guest memory is put back
 afterwards, so the game can't tell; the conformance harness checks that the
 4:3 middle is pixel-identical.
 
+**The art, redrawn by an AI, optional.** `py tools/upscale_art.py` (or Setup)
+runs every wall and sprite of your copy through Real-ESRGAN at 4x, on your GPU,
+in about 30 seconds. The renderer finds each texture in memory by a hash of
+its contents and draws from the 256x256 version, with smooth sprite
+silhouettes and the game's palette flashes and fades kept. The result is
+derived from the game, so it stays in `work/` and is never committed:
+[docs/art.md](docs/art.md).
+
+![The same frame: the game's own art (left), upscaled (right)](docs/screenshots/art.png)
+
 **DLSS, optional.** With an RTX GPU and NVIDIA's SDK fetched by
 `py tools\get_dlss.py` (or Setup), the redrawn view goes through DLSS: DLAA by
 default, or Super Resolution from fewer pixels. The raycaster knows exactly
@@ -104,6 +115,7 @@ replacing it: [docs/renderer.md](docs/renderer.md).
 | **F11**, **Alt+Enter** | borderless fullscreen |
 | **F12** | scaling: sharp-bilinear → smooth → CRT → nearest → integer |
 | **F9** | colour: natural / vivid |
+| **F6** | the upscaled art on/off (when made) |
 | **F7** | mouse aim on/off (off also releases the mouse) |
 | **F8** | DLSS: off → DLAA → quality → balanced → performance (when available) |
 | **Ctrl+F12** | screenshot to `screenshots\` |
@@ -172,7 +184,8 @@ big). It then:
 4. lifts and builds the game;
 5. leaves a **Wolfenstein 3-D** shortcut here.
 
-On a PC with an NVIDIA GPU it also offers the optional DLSS SDK, which is
+It also offers to redraw the art with an AI upscaler (`Setup.cmd -Art` says yes),
+and on a PC with an NVIDIA GPU the optional DLSS SDK, which is
 NVIDIA's, under NVIDIA's licence, and only downloaded if you say yes
 (`Setup.cmd -Dlss` says yes for you).
 
@@ -264,6 +277,7 @@ wolf3d_wl6.exe [options] [-- game arguments]
 | `--hires N` | hi-res 3D view at N × 320×200 (default 4 in a window, off headless) |
 | `--widescreen A` | widen the hi-res view to `16:9` (default in a window), `21:9`, or `off` (default headless). **F10** cycles widescreen → original → hi-res 4:3 |
 | `--dlss MODE` | `off`, `dlaa`, `quality`, `balanced`, `performance`, `ultra`: the 3D view through NVIDIA DLSS (needs the optional SDK and an RTX GPU; default `dlaa` in a window when available) |
+| `--art on\|off` | walls and sprites from the upscaled art (default on when `py tools/upscale_art.py` has made it; **F6**) |
 | `--mouse-aim on\|off` | the mouse turns, and only turns: vertical motion no longer walks you forward and back; captured whenever the window has focus (default on; **F7**) |
 | `--mouse-sens X` | mouse turning speed, 1 = the game's own (default 1; kept in `wolf3d.ini`) |
 | `--gdi` | present through GDI instead of Direct3D 11 |
@@ -336,6 +350,7 @@ runtime, as the DOS machine does.
 | [architecture](docs/architecture.md) | The parts, memory map, how time and interrupts work, code the game writes at run time, the presenter |
 | [lifting](docs/lifting.md) | What Wolf3D needed beyond Blake Stone: the page-flip wait, compiled scalers, the CONFIG's keys |
 | [renderer](docs/renderer.md) | The hi-res and widescreen 3D view: asking the original raycaster, compositing by who drew each pixel |
+| [art](docs/art.md) | The AI-upscaled art: how it is made from your VSWAP, found in memory by content, and palette-matched |
 | [dlss](docs/dlss.md) | The optional DLSS path: what it is given, how the conventions were measured, the licence |
 | [conformance](docs/conformance.md) | What the harness checks and why that is the ground truth |
 | [ROADMAP](ROADMAP.md) | What's next |

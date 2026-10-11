@@ -25,6 +25,12 @@ it into the gitignored external/dlss-sdk/ for your own build, under the NVIDIA
 RTX SDKs licence (https://github.com/NVIDIA/DLSS/blob/v310.9.1/LICENSE.txt).
 src/dlss.cpp is this project's own code (MIT) that calls it.
 
+Optional, and not included: Real-ESRGAN's ncnn/Vulkan build (MIT,
+https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan; Real-ESRGAN itself is
+BSD-3-Clause), which tools/upscale_art.py downloads into the gitignored
+external/realesrgan/ to redraw your copy's art. What it makes from the game
+stays in the gitignored work/.
+
 Wolfenstein 3-D is commercial software (id Software; published today by
 Bethesda/ZeniMax). Neither the game, nor anything generated from its
 executable, is part of this repository.

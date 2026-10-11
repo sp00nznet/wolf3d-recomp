@@ -25,6 +25,13 @@ All notable changes to this project are documented here. The format follows
   widescreen, save and load (`tools/conformance.py`, docs/conformance.md).
 - `Setup.cmd` finds Steam's `Wolfenstein 3D\base` (or GOG's) and builds a shortcut.
 - `WOLF_MISSDUMP=1`: the bytes at a dispatch miss.
+- The art, redrawn by an AI (optional; F6, `--art`): `tools/upscale_art.py`
+  runs every wall and sprite page of your VSWAP through Real-ESRGAN at 4x
+  (walls tiled 3x3 for seamless wrap, sprites with an upscaled coverage mask)
+  into gitignored `work/wl6/art/`. The renderer finds pages in memory by a
+  content hash, samples the 256x256 art bilinearly at the exact texel
+  position, and fits the live palette so flashes and fades still apply.
+  Setup offers it (`-Art`); a conformance check runs when it exists.
 - Mouse aim (on by default, F7, `--mouse-aim`, `--mouse-sens`): the mouse turns
   and only turns, captured while the window has focus; scripted sweeps
   (`ms:MX<dx>+<ms>` in `--keys`) and a conformance check for it.

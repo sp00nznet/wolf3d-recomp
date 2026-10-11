@@ -29,6 +29,9 @@ int hires_dlss_mode(void);
 int hires_dlss_parse(const char *s);
 const char *hires_dlss_name(int m);
 void dlss_shutdown(void);
+int hires_art_available(void);
+int hires_art_mode(void);
+void hires_set_art(int on);
 static double wide_aspect, frame_aspect = 4.0 / 3;   /* the chosen widescreen; this frame's shape */
 static int wide_on;
 
@@ -464,6 +467,7 @@ static void ini_save(void)
     WritePrivateProfileStringA("present", "hires", hires_on ? (wide_on ? "wide" : "on") : "off", ini_path);
     WritePrivateProfileStringA("present", "dlss", hires_dlss_name(hires_dlss_mode()), ini_path);
     char sens[32]; snprintf(sens, sizeof sens, "%g", aim_sens);
+    WritePrivateProfileStringA("present", "art", hires_art_mode() ? "1" : "0", ini_path);
     WritePrivateProfileStringA("mouse", "aim", aim_on ? "1" : "0", ini_path);
     WritePrivateProfileStringA("mouse", "sens", sens, ini_path);
 }
@@ -486,6 +490,13 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             return 0;
         }
         if (wp == VK_F9) { if (!up) look ^= 1; return 0; }
+        if (wp == VK_F6) {                            /* the upscaled art on/off */
+            if (!up) {
+                if (!hires_art_available()) fprintf(stderr, "[art] none: py tools\\upscale_art.py makes it\n");
+                else { hires_set_art(!hires_art_mode()); fprintf(stderr, "[art] %s\n", hires_art_mode() ? "on" : "off"); }
+            }
+            return 0;
+        }
         if (wp == VK_F7) {                            /* mouse aim on/off; off also lets the mouse go */
             if (!up) { aim_on ^= 1; capture_mouse(aim_on); fprintf(stderr, "[mouse] aim %s\n", aim_on ? "on" : "off"); }
             return 0;
@@ -664,6 +675,14 @@ void host_init(void)
         if (m < 0) fprintf(stderr, "[dlss] unknown mode '%s' (off, dlaa, quality, balanced, performance, ultra)\n", dl);
         else if (m && !hires_set_dlss(m) && g_opt.dlss)
             fprintf(stderr, "[dlss] not available (a build without the SDK, or not an RTX GPU): running without\n");
+    }
+    {   /* the upscaled art: on when it exists, unless --art off or F6 turned it off */
+        int on = 1;
+#ifdef _WIN32
+        if (!g_opt.headless) on = GetPrivateProfileIntA("present", "art", 1, ini_path) != 0;
+#endif
+        if (g_opt.art) on = strcmp(g_opt.art, "off") != 0;
+        hires_set_art(on);
     }
     if (g_opt.mouse_aim) aim_on = strcmp(g_opt.mouse_aim, "off") != 0;    /* the command line wins */
     if (g_opt.mouse_sens > 0) aim_sens = g_opt.mouse_sens;

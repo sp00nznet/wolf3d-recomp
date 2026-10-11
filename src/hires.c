@@ -447,6 +447,7 @@ static VCol side_col(int k, double psi)
  * again: where it is in game pixels and in the output, and its geometry. */
 static struct {
     int ok, S, OX, W;           /* scale; output x of game column 0; frame width */
+    int art;                    /* the upscaled art was used */
     int g0, nv, vx0, vw, vy0, vh;   /* the (wide) view, in game columns and rows */
     double F, cx, yc;           /* focal length and centre, game pixels */
     uint32_t pal[256];
@@ -462,7 +463,7 @@ static uint8_t ceil_c, floor_c;
  * choice is ground truth: the sub-texel fraction may move between the two
  * neighbours' columns but never past them -- at 63.99 + a fraction it would
  * read the next column in memory, a dashed line down the seam. */
-static int wall_sample(double u, int nv, uint32_t *tex, double *hh_out)
+static int wall_sample(double u, int nv, uint32_t *tex, double *hh_out, uint16_t *seg_out, double *tcol)
 {
     int c0 = (int)floor(u);
     double t = u - c0;
@@ -487,8 +488,136 @@ static int wall_sample(double u, int nv, uint32_t *tex, double *hh_out)
     if (col < lo) col = lo; if (col > hi) col = hi;
     *tex = (uint32_t)seg * 16 + (uint32_t)col * 64;
     *hh_out = hh;
+    *seg_out = seg;                               /* for the upscaled art: the page, and */
+    double f = tc - col;                          /* where in the chosen texel column */
+    *tcol = col + (f < 0 ? 0 : f > 0.999 ? 0.999 : f);
     return 1;
 }
+
+/* ---- upscaled art (optional: tools/upscale_art.py, docs/art.md) ---------------
+ *
+ * work/<game>/art/art.bin holds every wall and sprite page of the game, 4x
+ * by a neural upscaler, as RGBA. A page is found in guest memory by a hash of
+ * its contents -- the page cache moves pages around, but a page's bytes are
+ * its bytes -- the same hash tools/upscale_art.py computes from VSWAP: all
+ * 4096 bytes of a wall; a sprite's header, post commands and the pixels they
+ * use. The art is RGB, so the game's palette effects (the damage flash, the
+ * fades) are put back by fitting the live palette against the one the art
+ * was made from, per channel, c' = a*c + b: both effects are of that form. */
+typedef struct { uint32_t type, key, w, h; const uint8_t *rgba; } ArtEnt;
+static ArtEnt *art;
+static int nart, art_tried, art_on = 1;
+static uint8_t art_pal[256][3];
+static int art_hash[4096];                      /* key -> index + 1, open addressing */
+static float art_a[3], art_b[3];
+static struct { uint16_t seg; uint8_t type; const ArtEnt *e; } acache[256];
+static int nacache;
+
+static int art_load(void)
+{
+    if (art_tried) return nart > 0;
+    art_tried = 1;
+    char path[256];
+    snprintf(path, sizeof path, "work/%s/art/art.bin", g_game_id);
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+    uint8_t *d = malloc(n);
+    if (!d || fread(d, 1, n, f) != (size_t)n || n < 24 + 768 || memcmp(d, "WOLFART1", 8)) { fclose(f); free(d); return 0; }
+    fclose(f);
+    uint32_t count; memcpy(&count, d + 8, 4);
+    memcpy(art_pal, d + 24, 768);
+    art = calloc(count, sizeof *art);
+    size_t at = 24 + 768;
+    for (uint32_t i = 0; i < count && at + 16 <= (size_t)n; i++) {
+        ArtEnt *e = &art[nart];
+        memcpy(e, d + at, 16);
+        at += 16;
+        if (at + (size_t)e->w * e->h * 4 > (size_t)n) break;
+        e->rgba = d + at;
+        at += (size_t)e->w * e->h * 4;
+        uint32_t k = (e->key ^ e->type * 0x9E3779B9u) & 4095;
+        while (art_hash[k]) k = (k + 1) & 4095;
+        art_hash[k] = ++nart;
+    }
+    fprintf(stderr, "[art] %d upscaled pages from %s\n", nart, path);
+    return nart > 0;
+}
+
+static uint32_t fnv(uint32_t h, uint8_t b) { return (h ^ b) * 0x01000193u; }
+
+static const ArtEnt *art_find(uint16_t seg, int type)
+{
+    for (int i = 0; i < nacache; i++) if (acache[i].seg == seg && acache[i].type == type) return acache[i].e;
+    const uint8_t *m = g_cpu.mem;
+    uint32_t base = (uint32_t)seg * 16, h = 0x811C9DC5u;
+    if (type == 0) {
+        for (int i = 0; i < 4096; i++) h = fnv(h, m[(base + i) & 0xFFFFF]);
+    } else {
+        int left = seg_word(seg, 0), right = seg_word(seg, 2);
+        if (left < 0 || right > 63 || left > right) return NULL;
+        for (int i = 0; i < 4 + 2 * (right - left + 1); i++) h = fnv(h, m[(base + i) & 0xFFFFF]);
+        for (int c = left; c <= right; c++)
+            for (unsigned cmd = seg_word(seg, 4 + 2 * (c - left)), g = 0; g < 64; g++, cmd += 6) {
+                int end = seg_word(seg, cmd);
+                if (!end) break;
+                int src = (int16_t)seg_word(seg, cmd + 2), st = seg_word(seg, cmd + 4);
+                for (int k = 0; k < 6; k++) h = fnv(h, m[(base + cmd + k) & 0xFFFFF]);
+                for (int r = st / 2; r < end / 2; r++) h = fnv(h, m[(base + ((src + r) & 0xFFFF)) & 0xFFFFF]);
+            }
+    }
+    const ArtEnt *e = NULL;
+    for (uint32_t k = (h ^ type * 0x9E3779B9u) & 4095; art_hash[k]; k = (k + 1) & 4095)
+        if (art[art_hash[k] - 1].key == h && art[art_hash[k] - 1].type == (uint32_t)type) { e = &art[art_hash[k] - 1]; break; }
+    if (nacache < 256) { acache[nacache].seg = seg; acache[nacache].type = (uint8_t)type; acache[nacache++].e = e; }
+    return e;
+}
+
+/* Once a frame: forget which segment held which page, and fit the palette. */
+static void art_frame(const uint32_t *pal)
+{
+    nacache = 0;
+    for (int c = 0; c < 3; c++) {
+        double sx = 0, sy = 0, sxx = 0, sxy = 0;
+        for (int i = 0; i < 256; i++) {
+            double x = art_pal[i][c], y = pal[i] >> (16 - 8 * c) & 255;
+            sx += x; sy += y; sxx += x * x; sxy += x * y;
+        }
+        double v = sxx - sx * sx / 256;
+        art_a[c] = (float)(v > 1e-6 ? (sxy - sx * sy / 256) / v : 1);
+        art_b[c] = (float)((sy - art_a[c] * sx) / 256);
+    }
+}
+
+/* The art at texel position (u, v), 0..64 each, bilinear; *alpha 0..255. */
+static uint32_t art_px(const ArtEnt *e, double u, double v, int *alpha)
+{
+    double K = e->w / 64.0, fx = u * K - 0.5, fy = v * K - 0.5;
+    int x0 = (int)floor(fx), y0 = (int)floor(fy);
+    double tx = fx - x0, ty = fy - y0, acc[4] = {0};
+    for (int j = 0; j < 2; j++)
+        for (int i = 0; i < 2; i++) {
+            int x = x0 + i, y = y0 + j;
+            if (e->type == 0) x = (x + (int)e->w) % (int)e->w;          /* walls wrap */
+            else if (x < 0) x = 0; else if (x >= (int)e->w) x = e->w - 1;
+            if (x < 0) x = 0;
+            if (y < 0) y = 0; if (y >= (int)e->h) y = e->h - 1;
+            const uint8_t *p = e->rgba + ((size_t)y * e->w + x) * 4;
+            double wgt = (i ? tx : 1 - tx) * (j ? ty : 1 - ty);
+            for (int k = 0; k < 4; k++) acc[k] += p[k] * wgt;
+        }
+    if (alpha) *alpha = (int)acc[3];
+    uint32_t o = 0xFF000000u;
+    for (int c = 0; c < 3; c++) {
+        double y = art_a[c] * acc[c] + art_b[c];
+        o |= (uint32_t)(y < 0 ? 0 : y > 255 ? 255 : y) << (16 - 8 * c);
+    }
+    return o;
+}
+
+int hires_art_available(void) { return art_load(); }
+int hires_art_mode(void) { return art_on && nart > 0; }
+void hires_set_art(int on) { art_on = on; }
 
 /* Where each sprite goes in the wide view: its centre and height in game
  * pixels, and the game columns it may cover. A side pass's sprites are moved
@@ -538,6 +667,8 @@ static int compose_inner(uint32_t *out, int S, int *w, int *h)
         }
     uint32_t pal[256];
     for (int i = 0; i < 256; i++) pal[i] = vga_color(i);
+    const int use_art = art_on && art_load();
+    if (use_art) art_frame(pal);
     /* Widescreen: the frame is E game columns wider each side, always, so
      * the window's shape holds; the 4:3 picture sits in the middle and only
      * the 3D view, when it spans the screen, reaches into the sides. */
@@ -602,7 +733,8 @@ static int compose_inner(uint32_t *out, int S, int *w, int *h)
     for (int i = 0; i < nv * S; i++) wallh[i] = 0;
     for (int X = g0 * S; X < (g0 + nv) * S; X++) {
         uint32_t tex; double hh;
-        if (!wall_sample((X + 0.5) / S - 0.5 - g0, nv, &tex, &hh)) continue;
+        uint16_t wseg; double tcol;
+        if (!wall_sample((X + 0.5) / S - 0.5 - g0, nv, &tex, &hh, &wseg, &tcol)) continue;
         wallh[X - g0 * S] = hh * 8;
         if (hh <= 0) continue;
         /* rows the wall covers: |(Y + 0.5 - yc) / S| < hh */
@@ -614,6 +746,18 @@ static int compose_inner(uint32_t *out, int S, int *w, int *h)
         int x = (X + OX) / S - E;                               /* the game column; < 0 or > 319 in a strip */
         int gate = x >= 0 && x < 320;
         uint32_t *o = out + (size_t)y_lo * W + OX + X;
+        const ArtEnt *ae = use_art ? art_find(wseg, 0) : NULL;
+        if (ae) {                                               /* the upscaled art, at the exact texel position */
+            for (int Y = y_lo; Y <= y_hi; Y++, o += W) {
+                if (gate) {
+                    uint8_t ox = ow[Y / S][x];
+                    if (ox != DRAW_WALL && ox != DRAW_PLANE && !(ox == DRAW_SPRITE && nsprs_shown)) continue;
+                }
+                double rv = r0 + (Y - y_lo) * dr;
+                *o = art_px(ae, tcol, rv < 0 ? 0 : rv > 63.999 ? 63.999 : rv, NULL);
+            }
+            continue;
+        }
         for (int Y = y_lo; Y <= y_hi; Y++, o += W, R += dR) {
             if (gate) {
                 uint8_t ox = ow[Y / S][x];
@@ -637,8 +781,24 @@ static int compose_inner(uint32_t *out, int S, int *w, int *h)
         int X0 = (int)floor(xa * S), X1 = (int)ceil(xb * S);
         if (X0 < at->xlo * S) X0 = (int)(at->xlo * S);
         if (X1 > at->xhi * S) X1 = (int)(at->xhi * S);
+        const ArtEnt *ae = use_art ? art_find(sp->seg, 1) : NULL;
         for (int X = X0; X < X1; X++) {
             if (!sp->top && wallh[X - g0 * S] > ht * 4.0) continue;   /* behind a wall (wall units) */
+            if (ae) {                                   /* the upscaled art: its own smooth silhouette */
+                double uc = ((X + 0.5) / S - xc) / k + 32;
+                int x = (X + OX) / S - E, gate = !sp->pass && x >= 0 && x < 320;
+                int Ya = (int)ceil(yc - hh * S - 0.5), Yb = (int)floor(yc + hh * S - 0.5);
+                if (Ya < vy0 * S) Ya = vy0 * S;
+                if (Yb > (vy1 + 1) * S - 1) Yb = (vy1 + 1) * S - 1;
+                for (int Y = Ya; Y <= Yb; Y++) {
+                    if (gate && ow[Y / S][x] == DRAW_OTHER) continue;
+                    double rr = 32.0 + (Y + 0.5 - yc) / S / hh * 32.0;
+                    int a;
+                    uint32_t c = art_px(ae, uc, rr < 0 ? 0 : rr > 63.999 ? 63.999 : rr, &a);
+                    if (a >= 128) out[(size_t)Y * W + OX + X] = c;
+                }
+                continue;
+            }
             int c = (int)floor(((X + 0.5) / S - xc) / k) + 32;
             if (c < left || c > right) continue;
             unsigned cmd = seg_word(sp->seg, 4 + 2 * (c - left));
@@ -663,7 +823,7 @@ static int compose_inner(uint32_t *out, int S, int *w, int *h)
     }
     V.ok = 1; V.S = S; V.OX = OX; V.W = W;
     V.g0 = g0; V.nv = nv; V.vx0 = vx0; V.vw = vw; V.vy0 = vy0; V.vh = vy1 - vy0 + 1;
-    V.F = F; V.cx = vx0 + cx; V.yc = yc / S;
+    V.F = F; V.cx = vx0 + cx; V.yc = yc / S; V.art = use_art;
     memcpy(V.pal, pal, sizeof pal);
     return 1;
 }
@@ -782,16 +942,23 @@ static void dlss_view(uint32_t *out)
     for (int X = 0; X < rw; X++) {
         double gx = V.g0 + (X + 0.5 + jx) * sx, gxc = V.g0 + (X + 0.5) * sx;
         uint32_t tex = 0; double hh = 0;
-        int wall = wall_sample(gx - 0.5 - V.g0, V.nv, &tex, &hh) && hh > 0;
+        uint16_t wseg = 0; double tcol = 0;
+        int wall = wall_sample(gx - 0.5 - V.g0, V.nv, &tex, &hh, &wseg, &tcol) && hh > 0;
+        const ArtEnt *wae = wall && V.art ? art_find(wseg, 0) : NULL;
         colhh[X < 4096 ? X : 4095] = wall ? hh : 0;
         for (int Y = 0; Y < rh; Y++) {
             size_t i = (size_t)Y * rw + X;
             double gy = V.vy0 + (Y + 0.5 + jy) * sy, gyc = V.vy0 + (Y + 0.5) * sy, dy = gy - V.yc;
             double he;
             if (wall && fabs(dy) < hh) {
-                int r = (int)floor(32 + dy / hh * 32);
-                if (r < 0) r = 0; if (r > 63) r = 63;
-                col[i] = V.pal[mem[(tex + r) & 0xFFFFF]];
+                if (wae) {
+                    double rv = 32 + dy / hh * 32;
+                    col[i] = art_px(wae, tcol, rv < 0 ? 0 : rv > 63.999 ? 63.999 : rv, NULL);
+                } else {
+                    int r = (int)floor(32 + dy / hh * 32);
+                    if (r < 0) r = 0; if (r > 63) r = 63;
+                    col[i] = V.pal[mem[(tex + r) & 0xFFFFF]];
+                }
                 he = hh;
             } else {
                 col[i] = V.pal[dy < 0 ? ceil_c : floor_c];
@@ -819,6 +986,23 @@ static void dlss_view(uint32_t *out)
             double gx = V.g0 + (X + 0.5 + jx) * sx;
             if (gx < at->xlo || gx >= at->xhi) continue;
             if (!sp->top && colhh[X < 4096 ? X : 4095] > hs) continue;   /* behind this column's wall */
+            const ArtEnt *ae = V.art ? art_find(sp->seg, 1) : NULL;
+            if (ae) {                                   /* the upscaled art and its smooth silhouette */
+                double uc = (gx - at->xc) / k + 32;
+                for (int Y = Y0; Y < Y1; Y++) {
+                    double rr = 32 + (V.vy0 + (Y + 0.5 + jy) * sy - V.yc) / hs * 32;
+                    if (rr < 0 || rr >= 64) continue;
+                    int a;
+                    uint32_t cc = art_px(ae, uc, rr, &a);
+                    if (a < 128) continue;
+                    size_t i = (size_t)Y * rw + X;
+                    col[i] = cc;
+                    dep[i] = (float)(0.05 / d > 1 ? 1 : 0.05 / d);
+                    bias[i] = sp->top ? 255 : 0;
+                    MOTION(i, V.g0 + (X + 0.5) * sx, V.vy0 + (Y + 0.5) * sy, d, sp->top);
+                }
+                continue;
+            }
             int c = (int)floor((gx - at->xc) / k) + 32;
             if (c < left || c > right) continue;
             unsigned cmd0 = seg_word(sp->seg, 4 + 2 * (c - left));

@@ -12,6 +12,9 @@ squeezed below a pixel per texel and comes out as speckle that crawls as you
 move; DLAA resolves it into stone. Close up, the two look alike: the art is
 64×64, and DLSS reconstructs what the game draws, it does not add detail.*
 
+**For detail up close, add the upscaled art** ([art.md](art.md)): DLSS then
+reconstructs from 256x256 textures instead of 64x64.
+
 **What to expect.** The hi-res redraw already renders every frame at the
 output resolution with exact geometry, so on near walls DLSS has little to
 fix. It earns its keep at a distance and in motion: texture shimmer and crawl

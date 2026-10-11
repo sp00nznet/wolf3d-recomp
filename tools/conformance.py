@@ -203,6 +203,20 @@ def check_game(game):
            rc == 0 and dl[0] == 1704 and 0 < mad < 12 and hud,
            f'{dl[0]}x{dl[1]}, mean difference from the plain redraw {mad:.1f}, HUD {"identical" if hud else "DIFFERS"}')
 
+    # The upscaled art (optional: tools/upscale_art.py). The hi-res run above
+    # used it if it exists; this one turns it off. Every page found in guest
+    # memory by its hash means the view differs; the HUD must not.
+    if not os.path.exists(os.path.join(ROOT, 'work', game, 'art', 'art.bin')):
+        print('  SKIP  art: no work/wl6/art/art.bin (py tools/upscale_art.py makes it)')
+    else:
+        out = os.path.join(base, 'noart')
+        rc, err = run(game, out, 23, START, {'view': 22500}, extra=['--hires', '4', '--art', 'off'], viewsize=20)
+        na = read_bmp(os.path.join(out, 'view.bmp'))
+        diff = sum(a != b for a, b in zip(region(big, 0, 0, 1280, 600), region(na, 0, 0, 1280, 600))) / (1280 * 600)
+        hud = region(big, 0, 650, 1280, 800) == region(na, 0, 650, 1280, 800)
+        ok('art: walls and sprites from the upscaled art, the HUD untouched',
+           rc == 0 and diff > 0.3 and hud, f'{diff:.0%} of view pixels differ from the game\'s own art, HUD {"identical" if hud else "DIFFERS"}')
+
     # Mouse aim (on by default): a scripted 300-mickey sweep right must turn
     # the player, and a 400-mickey sweep up -- which the game itself turns
     # into walking -- must leave the position alone. WOLF_POS reports both.
