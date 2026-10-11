@@ -1,0 +1,25 @@
+Wolfenstein 3-D recomp
+Copyright (c) 2026 sp00nz. MIT licensed; see LICENSE.
+
+This repository includes third-party code under its own licence:
+
+  third_party/ymfm/    ymfm, Yamaha FM sound chip emulation
+                       Copyright (c) 2021, Aaron Giles
+                       BSD 3-Clause License -- LICENSES/BSD-3-Clause-ymfm.txt
+                       https://github.com/aaronsgiles/ymfm
+                       Only the OPL family sources are vendored (opl, fm,
+                       adpcm, pcm), unmodified.
+
+It builds against, but does not include, the pcrecomp toolkit (MIT):
+https://github.com/sp00nznet/pcrecomp
+
+The DOS machine in src/ comes from the Blake Stone recomp
+(https://github.com/sp00nznet/blakestone, MIT, same author), and
+src/present_d3d.c's shader from the Gunman Chronicles recomp (MIT, same
+author). Nothing in this repository is derived from id Software's source
+release of Wolfenstein 3-D (GPL): what the runtime knows about the game was
+read out of the shipping executable with the pcrecomp disassembler.
+
+Wolfenstein 3-D is commercial software (id Software; published today by
+Bethesda/ZeniMax). Neither the game, nor anything generated from its
+executable, is part of this repository.
