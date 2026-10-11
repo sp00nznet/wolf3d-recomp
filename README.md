@@ -355,6 +355,12 @@ runtime, as the DOS machine does.
 | [conformance](docs/conformance.md) | What the harness checks and why that is the ground truth |
 | [ROADMAP](ROADMAP.md) | What's next |
 
+## Contributing
+
+Issues and pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) has the
+rules, the most important being that nothing from the game goes in, and no code
+written with GPL source open.
+
 ## License
 
 The code in this repository (the lift driver, the runtime, the scripts and the

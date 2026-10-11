@@ -11,8 +11,8 @@ project(wolf3d C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
-# Static CRT: the exe runs on a machine with no VC++ redistributable (netlab's
-# test VMs, a fresh install) instead of failing to start (repo rules, section 10).
+# Static CRT: the exe runs on a machine with no VC++ redistributable (a test VM,
+# a fresh install) instead of failing to start.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 option(WOLF_TRACE "record lifted calls and enable WOLF_WATCH (slow)" OFF)
 
