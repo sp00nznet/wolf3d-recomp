@@ -30,6 +30,8 @@ typedef struct {
     const char *wide;         /* widescreen aspect: "16:9", "21:9", "off"; NULL default */
     int realtime;             /* headless, but on the wall clock */
     int gdi;                  /* --gdi: present through GDI, not Direct3D 11 */
+    const char *mouse_aim;    /* --mouse-aim on | off (NULL: wolf3d.ini, else on) */
+    double mouse_sens;        /* --mouse-sens: turn per mickey, 1 = the game's own (0: wolf3d.ini) */
     const char *dlss;         /* --dlss: off | dlaa | quality | balanced | performance | ultra */
 } Options;
 extern Options g_opt;

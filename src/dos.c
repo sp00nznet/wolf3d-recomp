@@ -632,7 +632,9 @@ void mouse_host(int dx, int dy, int buttons)
 void mouse_int33(CPU *c)
 {
     switch (c->ax) {
-    case 0x00: mouse_on = !g_opt.headless; c->ax = mouse_on ? 0xFFFF : 0; c->bx = 2; break;
+    /* headless has no mouse, unless a script moves one ("ms:MX..." in --keys) */
+    case 0x00: mouse_on = !g_opt.headless || (g_opt.keys && (strstr(g_opt.keys, ":MX") || strstr(g_opt.keys, ":MY")));
+        c->ax = mouse_on ? 0xFFFF : 0; c->bx = 2; break;
     case 0x03: c->bx = (uint16_t)mbuttons; c->cx = (uint16_t)mx; c->dx = (uint16_t)my; break;
     case 0x04: mx = c->cx; my = c->dx; break;
     case 0x05: case 0x06: c->ax = (uint16_t)mbuttons; c->bx = 0; break;

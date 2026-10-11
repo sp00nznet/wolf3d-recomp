@@ -25,6 +25,9 @@ All notable changes to this project are documented here. The format follows
   widescreen, save and load (`tools/conformance.py`, docs/conformance.md).
 - `Setup.cmd` finds Steam's `Wolfenstein 3D\base` (or GOG's) and builds a shortcut.
 - `WOLF_MISSDUMP=1`: the bytes at a dispatch miss.
+- Mouse aim (on by default, F7, `--mouse-aim`, `--mouse-sens`): the mouse turns
+  and only turns, captured while the window has focus; scripted sweeps
+  (`ms:MX<dx>+<ms>` in `--keys`) and a conformance check for it.
 - Optional NVIDIA DLSS on the 3D view (`--dlss`, F8): DLAA, or Super Resolution
   from fewer pixels, fed exact depth and motion vectors from the raycaster's hit
   points and the eye's movement (`src/dlss.cpp`, `dlss_view()`, docs/dlss.md).

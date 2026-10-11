@@ -22,6 +22,9 @@
  *   --dlss MODE       the 3D view through NVIDIA DLSS: off, dlaa, quality, balanced,
  *                     performance, ultra (F8 cycles; needs a build with the optional
  *                     SDK and an RTX GPU; default dlaa in a window, off headless)
+ *   --mouse-aim on|off  the mouse turns (only), captured while the window has focus
+ *                     (default on; F7 toggles)
+ *   --mouse-sens X    mouse turning speed, 1 = the game's own (default 1)
  *   --trace           log DOS calls to stderr
  *   --shot FILE.bmp   write the last frame at exit
  *   --shot-at LIST    frames at emulated times: "ms:file.bmp,..."
@@ -84,6 +87,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--realtime")) g_opt.realtime = 1;
         else if (!strcmp(a, "--gdi")) g_opt.gdi = 1;
         else if (!strcmp(a, "--dlss") && v) { g_opt.dlss = v; i++; }
+        else if (!strcmp(a, "--mouse-aim") && v) { g_opt.mouse_aim = v; i++; }
+        else if (!strcmp(a, "--mouse-sens") && v) { g_opt.mouse_sens = atof(v); i++; }
         else if (!strcmp(a, "--scale") && v) { g_opt.scale_name = v; i++; }
         else if (!strcmp(a, "--hires") && v) { g_opt.hires = atoi(v); hires_set = 1; i++; }
         else if (!strcmp(a, "--widescreen") && v) { g_opt.wide = v; i++; }

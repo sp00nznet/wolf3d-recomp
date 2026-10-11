@@ -203,6 +203,28 @@ def check_game(game):
            rc == 0 and dl[0] == 1704 and 0 < mad < 12 and hud,
            f'{dl[0]}x{dl[1]}, mean difference from the plain redraw {mad:.1f}, HUD {"identical" if hud else "DIFFERS"}')
 
+    # Mouse aim (on by default): a scripted 300-mickey sweep right must turn
+    # the player, and a 400-mickey sweep up -- which the game itself turns
+    # into walking -- must leave the position alone. WOLF_POS reports both.
+    out = os.path.join(base, 'mouse')
+    os.environ['WOLF_POS'] = '1'
+    try:
+        rc, err = run(game, out, 27, START + ',23000:MX300+1000,25000:MY-400+1000', {})
+    finally:
+        del os.environ['WOLF_POS']
+    pos = {}
+    for l in err.splitlines():
+        if l.startswith('[pos] t='):
+            f = l.split()
+            pos[int(f[1][2:])] = (f[4], int(f[-1].split('=')[1]))   # 'at X,Y', 'angle=A'
+    before = next((v for t, v in sorted(pos.items()) if t >= 22700), None)
+    turned = next((v for t, v in sorted(pos.items()) if t >= 24900), None)
+    after = next((v for t, v in sorted(pos.items()) if t >= 26900), None)
+    turn = (before[1] - turned[1]) % 360 if before and turned else 0
+    ok('mouse aim: the mouse turns the player, vertical motion does not walk',
+       rc == 0 and 5 <= turn <= 60 and turned and after and turned[0] == after[0] == before[0],
+       f'turned {turn} degrees, position {before[0] if before else "?"} -> {after[0] if after else "?"}')
+
     # Save from inside a game, then load it in a fresh process. ESC opens the
     # menu on New Game; Save Game is four down. Slot 0, type a name, ENTER.
     # The load: title, menu, Load Game is three down (Save Game is greyed out

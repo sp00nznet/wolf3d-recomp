@@ -116,7 +116,7 @@ A 70 Hz frame has 14 ms.
 
 ## Conformance
 
-`tools/conformance.py` has an 18th check when the build and GPU have DLSS:
+`tools/conformance.py` has a 19th check when the build and GPU have DLSS:
 the view through DLSS quality, close to the plain redraw (mean difference 2.8)
 with the HUD below it pixel-identical. Without DLSS it prints `SKIP` and
-isn't counted, so the baseline (17) holds everywhere.
+isn't counted, so the baseline (18) holds everywhere.

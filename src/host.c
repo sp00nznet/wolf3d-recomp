@@ -131,6 +131,48 @@ static void shots_due(uint64_t now)
     }
 }
 
+/* ---- mouse aim -----------------------------------------------------------------
+ *
+ * The game turns with the mouse's horizontal motion and walks with its
+ * vertical motion (when the CONFIG has the mouse enabled; Steam's does). Mouse
+ * aim, on unless --mouse-aim off (F7 toggles): horizontal turns, scaled by
+ * --mouse-sens with the fractions carried so slow movement still turns;
+ * vertical is dropped, so walking stays on the keys. In a window the mouse is
+ * captured whenever the window has focus. */
+static int aim_on = 1;
+static double aim_sens = 1.0, aim_frac;
+
+static void aim_motion(int dx, int dy, int buttons)
+{
+    if (!aim_on) { mouse_host(dx, dy, buttons); return; }
+    double v = dx * aim_sens + aim_frac;
+    int i = (int)v;
+    aim_frac = v - i;
+    mouse_host(i, 0, buttons);
+}
+
+/* Scripted mouse sweeps for tests: "ms:MX<dx>+<over ms>" in --keys, and
+ * "ms:MY<dy>+<over ms>" (which mouse aim drops). */
+typedef struct { uint64_t at, dur; int dx, dy, sent_x, sent_y; } MouseEv;
+static MouseEv mev[64];
+static int nmev;
+
+static void mouse_due(void)
+{
+    uint64_t now = pit_now();
+    for (int i = 0; i < nmev; i++) {
+        MouseEv *m = &mev[i];
+        if (now < m->at || (m->sent_x == m->dx && m->sent_y == m->dy)) continue;
+        double f = m->dur ? (double)(now - m->at) / m->dur : 1;
+        if (f > 1) f = 1;
+        int tx = (int)lround(m->dx * f), ty = (int)lround(m->dy * f);
+        if (tx != m->sent_x || ty != m->sent_y) {
+            aim_motion(tx - m->sent_x, ty - m->sent_y, 0);
+            m->sent_x = tx; m->sent_y = ty;
+        }
+    }
+}
+
 /* ---- scripted keys ----------------------------------------------------------- */
 
 typedef struct { uint64_t at; uint8_t sc; uint8_t up; } KeyEv;
@@ -156,8 +198,15 @@ static void keys_parse(void)
         if (sscanf(p, "%lf:%31[^,]%n", &ms, name, &n) < 2) break;
         char *h = strchr(name, '+');            /* KEY+holdms */
         if (h) { *h = 0; hold = atoi(h + 1); }
-        int sc = key_by_name(name);
         uint64_t at = (uint64_t)(ms * PIT_HZ / 1000.0);
+        if ((name[0] == 'M' || name[0] == 'm') && (toupper(name[1]) == 'X' || toupper(name[1]) == 'Y') && nmev < 64) {
+            int v = atoi(name + 2);                 /* MX<dx>+<ms>, MY<dy>+<ms> */
+            mev[nmev++] = (MouseEv){ at, (uint64_t)((h ? hold : 0) * PIT_HZ / 1000.0),
+                                     toupper(name[1]) == 'X' ? v : 0, toupper(name[1]) == 'Y' ? v : 0, 0, 0 };
+            p += n; if (*p == ',') p++;
+            continue;
+        }
+        int sc = key_by_name(name);
         kev[nkev++] = (KeyEv){ at, (uint8_t)sc, 0 };
         kev[nkev++] = (KeyEv){ at + (uint64_t)(hold * PIT_HZ / 1000.0), (uint8_t)sc, 1 };
         p += n; if (*p == ',') p++;
@@ -300,6 +349,24 @@ static int mouse_buttons_now(void)
          | ((GetKeyState(VK_MBUTTON) < 0) ? 4 : 0);
 }
 
+/* Take the mouse (raw input, the cursor hidden and kept in the client area),
+ * or give it back. Called again after a move or resize to re-clip. */
+static void capture_mouse(int on)
+{
+    if (on && wnd && GetForegroundWindow() == wnd) {
+        RECT r; GetClientRect(wnd, &r); MapWindowPoints(wnd, NULL, (POINT *)&r, 2);
+        if (!captured) {
+            RAWINPUTDEVICE rid = { 1, 2, RIDEV_INPUTSINK, wnd };
+            RegisterRawInputDevices(&rid, 1, sizeof rid);
+            ShowCursor(FALSE);
+            captured = 1;
+        }
+        ClipCursor(&r);
+    } else if (!on && captured) {
+        ClipCursor(NULL); ShowCursor(TRUE); captured = 0;
+    }
+}
+
 void host_snapshot(const char *path);
 
 /* F12: the current frame to screenshots\<game>-NNN.bmp */
@@ -382,6 +449,9 @@ static void ini_load(void)
     GetPrivateProfileStringA("present", "scale", "sharp", v, sizeof v, ini_path);
     for (int i = 0; i < 5; i++) if (!strcmp(v, scale_names[i])) scale_mode = i;
     look = GetPrivateProfileIntA("present", "look", 0, ini_path) != 0;
+    aim_on = GetPrivateProfileIntA("mouse", "aim", 1, ini_path) != 0;
+    GetPrivateProfileStringA("mouse", "sens", "1", v, sizeof v, ini_path);
+    aim_sens = atof(v) > 0 ? atof(v) : 1;
     if (!g_opt.fullscreen) g_opt.fullscreen = GetPrivateProfileIntA("present", "fullscreen", 0, ini_path);
 }
 
@@ -393,6 +463,9 @@ static void ini_save(void)
     WritePrivateProfileStringA("present", "fullscreen", (GetWindowLong(wnd, GWL_STYLE) & WS_OVERLAPPEDWINDOW) ? "0" : "1", ini_path);
     WritePrivateProfileStringA("present", "hires", hires_on ? (wide_on ? "wide" : "on") : "off", ini_path);
     WritePrivateProfileStringA("present", "dlss", hires_dlss_name(hires_dlss_mode()), ini_path);
+    char sens[32]; snprintf(sens, sizeof sens, "%g", aim_sens);
+    WritePrivateProfileStringA("mouse", "aim", aim_on ? "1" : "0", ini_path);
+    WritePrivateProfileStringA("mouse", "sens", sens, ini_path);
 }
 
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
@@ -413,6 +486,10 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             return 0;
         }
         if (wp == VK_F9) { if (!up) look ^= 1; return 0; }
+        if (wp == VK_F7) {                            /* mouse aim on/off; off also lets the mouse go */
+            if (!up) { aim_on ^= 1; capture_mouse(aim_on); fprintf(stderr, "[mouse] aim %s\n", aim_on ? "on" : "off"); }
+            return 0;
+        }
         if (wp == VK_F8) {                            /* DLSS: off -> DLAA -> quality -> balanced -> performance -> */
             if (!up) {
                 int m = (hires_dlss_mode() + 1) % 5;
@@ -440,17 +517,11 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     }
     case WM_SYSCHAR: return 0;                       /* no menu beep on Alt */
 
-    /* Mouse: click in the window to capture it (the game turns with it when
-     * MOUSE ENABLED is on in its options); leaving the window releases it.
-     * Raw input, so the motion is the device's, not the cursor's. */
+    /* Mouse: captured whenever the window has focus while mouse aim is on
+     * (F7), otherwise by a click; losing focus releases it. Raw input, so the
+     * motion is the device's, not the cursor's. */
     case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:
-        if (!captured) {
-            RAWINPUTDEVICE rid = { 1, 2, RIDEV_INPUTSINK, h };
-            RECT r; GetClientRect(h, &r); MapWindowPoints(h, NULL, (POINT *)&r, 2);
-            RegisterRawInputDevices(&rid, 1, sizeof rid);
-            ClipCursor(&r); ShowCursor(FALSE); captured = 1;
-            return 0;
-        }
+        if (!captured) { capture_mouse(1); return 0; }
         /* fall through: a click while captured is a button for the game */
     case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP:
         if (captured) mouse_host(0, 0, (int)(((wp & MK_LBUTTON) ? 1 : 0) | ((wp & MK_RBUTTON) ? 2 : 0) | ((wp & MK_MBUTTON) ? 4 : 0)));
@@ -459,11 +530,17 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         RAWINPUT ri; UINT sz = sizeof ri;
         if (captured && GetRawInputData((HRAWINPUT)lp, RID_INPUT, &ri, &sz, sizeof(RAWINPUTHEADER)) != (UINT)-1
             && ri.header.dwType == RIM_TYPEMOUSE && !(ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE))
-            mouse_host(ri.data.mouse.lLastX, ri.data.mouse.lLastY, mouse_buttons_now());
+            aim_motion(ri.data.mouse.lLastX, ri.data.mouse.lLastY, mouse_buttons_now());
         break;
     }
+    case WM_ACTIVATE:
+        if (LOWORD(wp) != WA_INACTIVE && aim_on && !HIWORD(wp)) capture_mouse(1);
+        break;
+    case WM_SIZE: case WM_MOVE:                       /* fullscreen and back: clip to the new client area */
+        if (captured) capture_mouse(1);
+        break;
     case WM_KILLFOCUS:
-        if (captured) { ClipCursor(NULL); ShowCursor(TRUE); captured = 0; }
+        capture_mouse(0);
         break;
     }
     return DefWindowProcA(h, m, wp, lp);
@@ -588,6 +665,8 @@ void host_init(void)
         else if (m && !hires_set_dlss(m) && g_opt.dlss)
             fprintf(stderr, "[dlss] not available (a build without the SDK, or not an RTX GPU): running without\n");
     }
+    if (g_opt.mouse_aim) aim_on = strcmp(g_opt.mouse_aim, "off") != 0;    /* the command line wins */
+    if (g_opt.mouse_sens > 0) aim_sens = g_opt.mouse_sens;
     int hires_cli = g_opt.hires >= 0;
     if (g_opt.hires < 0) g_opt.hires = g_opt.headless ? 0 : 4;   /* on in a window */
     hires_on = g_opt.hires > 0 && (hires_cli || strcmp(ini_hires, "off"));
@@ -618,6 +697,7 @@ void host_init(void)
     bmi.bmiHeader.biSize = sizeof bmi.bmiHeader;
     bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biBitCount = 32; bmi.bmiHeader.biCompression = BI_RGB;
     if (g_opt.fullscreen) toggle_fullscreen();
+    if (aim_on) capture_mouse(1);
     for (int i = 0; i < 5; i++)
         if (g_opt.scale_name && !strcmp(g_opt.scale_name, scale_names[i])) scale_mode = i;
     if (!g_opt.mute) wave_open();
@@ -628,6 +708,7 @@ void host_frame(void)
 {
     static uint64_t last_present;
     keys_due();
+    mouse_due();
     route_due();
     uint64_t now = pit_now();
     shots_due(now);

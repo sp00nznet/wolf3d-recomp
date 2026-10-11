@@ -52,11 +52,11 @@ conformance run.
 | Direct3D 11 presenter: sharp-bilinear, smooth, CRT, nearest, integer | ✅ |
 | Borderless fullscreen, settings kept in `wolf3d.ini` | ✅ |
 | Headless recording (`--headless --record out.mp4`) | ✅ |
-| Mouse (raw input) | implemented, untested |
+| Mouse aim: turn-only, captured while focused, sensitivity (F7) | ✅ scripted; not yet with a hand on a mouse |
 | Gamepad (XInput, as keys) | implemented, untested |
 | PC speaker | modelled, untested |
 | Episodes 2–6, a full playthrough | not yet tried |
-| **Conformance** ([docs](docs/conformance.md)) | **17/17**, 18/18 with DLSS |
+| **Conformance** ([docs](docs/conformance.md)) | **18/18**, 19/19 with DLSS |
 
 Everything marked ✅ was seen working, in scripted headless runs (which the
 conformance harness repeats) and in a window on a virtual monitor. Nobody has
@@ -104,6 +104,7 @@ replacing it: [docs/renderer.md](docs/renderer.md).
 | **F11**, **Alt+Enter** | borderless fullscreen |
 | **F12** | scaling: sharp-bilinear → smooth → CRT → nearest → integer |
 | **F9** | colour: natural / vivid |
+| **F7** | mouse aim on/off (off also releases the mouse) |
 | **F8** | DLSS: off → DLAA → quality → balanced → performance (when available) |
 | **Ctrl+F12** | screenshot to `screenshots\` |
 
@@ -263,6 +264,8 @@ wolf3d_wl6.exe [options] [-- game arguments]
 | `--hires N` | hi-res 3D view at N × 320×200 (default 4 in a window, off headless) |
 | `--widescreen A` | widen the hi-res view to `16:9` (default in a window), `21:9`, or `off` (default headless). **F10** cycles widescreen → original → hi-res 4:3 |
 | `--dlss MODE` | `off`, `dlaa`, `quality`, `balanced`, `performance`, `ultra`: the 3D view through NVIDIA DLSS (needs the optional SDK and an RTX GPU; default `dlaa` in a window when available) |
+| `--mouse-aim on\|off` | the mouse turns, and only turns: vertical motion no longer walks you forward and back; captured whenever the window has focus (default on; **F7**) |
+| `--mouse-sens X` | mouse turning speed, 1 = the game's own (default 1; kept in `wolf3d.ini`) |
 | `--gdi` | present through GDI instead of Direct3D 11 |
 | `--mute` | no sound |
 | `--data DIR` / `--save DIR` | game files / where CONFIG and saved games go |
@@ -277,8 +280,10 @@ wolf3d_wl6.exe [options] [-- game arguments]
 
 In the window:
 
-- **Mouse:** click to capture it; it's released when the window loses focus.
-  Turn the mouse on in the game's *Control* menu.
+- **Mouse aim:** on by default. The mouse is captured while the window has
+  focus and turns you; walking stays on the keys. **F7** turns it off and lets
+  the mouse go. It needs the mouse enabled in the game's *Control* menu (the
+  Steam CONFIG has it on); the left button fires.
 - **Gamepad:** an Xbox-style pad works as the keys the game already uses.
   Stick or d-pad moves (in menus and in play), **RT** fires, **LT** strafes,
   **A** uses, **X** is Enter, **RB** runs, **B**/**Start** is Esc, **Back** is Tab.
